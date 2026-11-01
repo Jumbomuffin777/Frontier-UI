@@ -29,6 +29,9 @@ and draws real street routes** — then renders a polished, theme-aware card inl
 <div align="center">
 <img src="docs/demo-map.gif" alt="Follow-up question: walking distance from Union Station under $120 — live map with pins and restaurant cards" width="800">
 <br><sub>Follow-up in the same chat: a live map around Union Station with pinned picks and photo cards.</sub>
+<br><br>
+<img src="docs/demo-trip.gif" alt="A seven-day Cancún plan: photos, currency tips, day tabs with a route per day on a self-hosted map, budget sliders, live weather, link previews and a spreadsheet export" width="600">
+<br><sub>A 7-day Cancún trip: day-by-day routes on a self-hosted planet map, budget sliders, live weather, link previews — then “build me a spreadsheet”.</sub>
 </div>
 
 ## ✨ Features
