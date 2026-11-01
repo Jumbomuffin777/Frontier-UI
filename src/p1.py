@@ -1,8 +1,8 @@
 """
 title: Intelligent UI
 author: Zability (Claude Opus 5.5); inspired by ChatGPT Intelligent UI and thesysdev/open-intelligent-ui (MIT)
-version: 1.0.0
-description: ChatGPT-style Intelligent UI: real photo galleries, live street maps with numbered pins and routes, place cards, itineraries, charts, tables, citations and follow-ups. Media, places and routes are resolved server-side; rendering is an isolated embed.
+version: 1.1.0
+description: ChatGPT-style Intelligent UI: photo galleries, street maps with multi-day routes (self-hosted planet tiles), filterable place cards, itineraries, budgets, calculators, live weather and quotes, link previews, Gmail drafts, calendar export, and real Word/Excel/PowerPoint/PDF files via the Craft apps.
 required_open_webui_version: 0.6.0
 """
 import asyncio
@@ -16,7 +16,7 @@ import aiohttp
 from pydantic import BaseModel, Field
 from starlette.responses import HTMLResponse
 
-UA = {"User-Agent": "zability-intelligent-ui/1.0 (self-hosted Open WebUI tool)"}
+UA = {"User-Agent": "intelligent-webui/1.1 (+https://github.com/Jumbomuffin777/Intelligent-webui)"}
 _IMG_CACHE: dict = {}
 _GEO_CACHE: dict = {}
 _ROUTE_CACHE: dict = {}

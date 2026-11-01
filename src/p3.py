@@ -5,7 +5,7 @@ _HTML = r'''<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-__NONCE__' __CDNHOST__; style-src 'unsafe-inline' __CDNHOST__; img-src https: http: data: blob:; connect-src https:; worker-src blob:; child-src blob:; font-src https: data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-__NONCE__' __CDNHOST__; style-src 'unsafe-inline' __CDNHOST__; img-src https: http: data: blob:; connect-src https: __TILESHOST__; worker-src blob:; child-src blob:; font-src https: data:; base-uri 'none'; form-action 'none'">
 <link rel="stylesheet" href="__CDN__/dist/maplibre-gl.css">
 <style>
 :root{--fg:#0d0d0d;--muted:#5d5d5d;--faint:#8f8f8f;--bg:transparent;--surface:#f4f4f5;--surface2:#ffffff;--line:rgba(0,0,0,.09);--accent:#0b6bcb;--ok:#15803d;--bad:#b91c1c;--warn:#b45309;--shadow:0 1px 2px rgba(0,0,0,.06),0 4px 14px rgba(0,0,0,.06);--route:#111;--routecase:#fff;--pin:#fff;--pinfg:#111;--chip:#ececee}

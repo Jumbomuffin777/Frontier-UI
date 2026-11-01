@@ -1,0 +1,30 @@
+# Craft apps desktop (linuxserver/craft-apps) + the Intelligent WebUI Craft bridge.
+# LAN ONLY: the desktop has a passwordless-sudo terminal. Never expose these ports to the internet.
+#   1. cp .env.example .env  and set LAN_IP, CUSTOM_USER, PASSWORD
+#   2. docker compose up -d
+#   3. ./install-extra-apps.sh   (adds WordCraft, GridCraft, DeckCraft, CADCraft, SoundCraft, ArtCraft Launcher + the bridge)
+name: craft-apps
+services:
+  craft-apps:
+    image: lscr.io/linuxserver/craft-apps:latest
+    container_name: craft-apps
+    restart: unless-stopped
+    shm_size: "1gb"
+    env_file: .env
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TITLE=Craft
+    # Optional GPU acceleration: uncomment and point at a render node
+    # devices: ["/dev/dri/renderD128:/dev/dri/renderD128"]
+    # environment: ["DRINODE=/dev/dri/renderD128"]
+    volumes:
+      - ./config:/config
+    ports:
+      - "${LAN_IP}:18260:3001"   # https desktop
+      - "${LAN_IP}:18261:3000"   # http desktop
+    networks: [openwebui]        # the bridge listens on craft-apps:8790 for Open WebUI only (not published)
+networks:
+  openwebui:
+    external: true
+    name: ${OPENWEBUI_NETWORK:-open-webui_default}

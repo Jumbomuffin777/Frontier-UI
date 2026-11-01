@@ -1,2 +1,7 @@
 __pycache__/
 *.pyc
+
+server/craft-apps/.env
+server/craft-apps/config/
+server/local-web/www/
+server/local-web/craft/

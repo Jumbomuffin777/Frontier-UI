@@ -4,10 +4,12 @@ def _is_url(s):
     return isinstance(s, str) and s.startswith(("https://", "http://", "data:image/"))
 
 
-async def _resolve(spec, searx, do_images=True, do_maps=True):
-    """Fill photos, coordinates and street routes in place. Never raises; failures degrade gracefully."""
+async def _resolve(spec, searx, do_images=True, do_maps=True, opts=None):
+    """Fill photos, coordinates, street routes, live data and link previews in place. Never raises; failures degrade gracefully."""
+    opts = opts or {}
     blocks = spec.get("blocks") if isinstance(spec.get("blocks"), list) else []
     img_jobs = []  # (target dict, key, query)
+    live_jobs = []
 
     def want_img(obj, key, query, wiki=False):
         if do_images and isinstance(obj, dict) and query and not _is_url(obj.get(key)):
@@ -40,8 +42,27 @@ async def _resolve(spec, searx, do_images=True, do_maps=True):
                         want_img(it, "candidates", it["image"])
             elif t == "hero":
                 want_img(b, "candidates", b.get("image") if not _is_url(b.get("image")) else None, True)
-            elif t == "map" and do_maps:
-                geo_tasks.append(b)
+            elif t == "map":
+                if isinstance(b.get("days"), list):  # {"days":[{"label":"Day 1","places":[...]}]} -> flat places tagged with day
+                    flat = []
+                    for i, d in enumerate(b["days"]):
+                        if isinstance(d, dict):
+                            lab = str(d.get("label") or d.get("day") or d.get("title") or f"Day {i + 1}")
+                            for p in d.get("places") or d.get("items") or []:
+                                if isinstance(p, dict):
+                                    p.setdefault("day", lab)
+                                    flat.append(p)
+                    b["places"] = flat + [p for p in (b.get("places") or []) if isinstance(p, dict)]
+                    b.pop("days", None)
+                if do_maps:
+                    geo_tasks.append(b)
+            elif t == "weather" and opts.get("live"):
+                live_jobs.append(("weather", b))
+            elif t == "stock" and opts.get("live"):
+                live_jobs.append(("stock", b))
+            elif t == "links":
+                b["items"] = [({"url": it} if isinstance(it, str) else it) for it in items if isinstance(it, (dict, str))][:6]
+                live_jobs.append(("links", b))
 
         async def run_img(obj, key, q, wiki):
             try:
@@ -86,15 +107,49 @@ async def _resolve(spec, searx, do_images=True, do_maps=True):
                     p["lat"] = p["lng"] = None
 
             await asyncio.gather(*(one(p) for p in places), return_exceptions=True)
-            pts = [(p["lat"], p["lng"]) for p in places if p.get("lat") is not None]
-            if b.get("route") and 2 <= len(pts) <= 25 and max(_km(pts[0], q) for q in pts) < 400:
-                try:
-                    mode = str(b.get("mode") or "auto").lower()
-                    b["route_geo"] = await _route(session, pts, mode if mode in ("walk", "drive") else "auto")
-                except Exception:
-                    b["route_geo"] = None
+            mode = str(b.get("mode") or "auto").lower()
+            mode = mode if mode in ("walk", "drive") else "auto"
+            days = []
+            for p in places:
+                if p.get("day") and p["day"] not in days:
+                    days.append(p["day"])
 
-        await asyncio.gather(*(run_img(*j) for j in img_jobs), *(run_map(b) for b in geo_tasks), return_exceptions=True)
+            async def route_for(ps):
+                pts = [(p["lat"], p["lng"]) for p in ps if p.get("lat") is not None]
+                if b.get("route", True if days else False) and 2 <= len(pts) <= 25 and max(_km(pts[0], q) for q in pts) < 400:
+                    try:
+                        return await _route(session, pts, mode)
+                    except Exception:
+                        return None
+                return None
+
+            if len(days) > 1:  # one street route per day; the "All" view shows every day's route in its own colour
+                res = await asyncio.gather(*(route_for([p for p in places if p.get("day") == d]) for d in days), return_exceptions=True)
+                b["day_routes"] = {d: (r if isinstance(r, dict) else None) for d, r in zip(days, res)}
+                b["days_order"] = days
+            else:
+                b["route_geo"] = await route_for(places)
+
+        async def run_live(kind, b):
+            try:
+                if kind == "weather":
+                    b["weather"] = await asyncio.wait_for(_weather(session, b, opts.get("unit", "fahrenheit")), 7)
+                elif kind == "stock":
+                    syms = b.get("symbols") or ([b["symbol"]] if b.get("symbol") else [])
+                    qs = await asyncio.gather(*(asyncio.wait_for(_quote(session, s), 7) for s in syms[:6]), return_exceptions=True)
+                    b["quotes"] = [q if isinstance(q, dict) else {"symbol": str(s).upper(), "error": str(q)[:120]} for s, q in zip(syms, qs)]
+                elif kind == "links":
+                    await asyncio.gather(*(asyncio.wait_for(_preview(session, it, opts.get("bridge")), 9) for it in b["items"]), return_exceptions=True)
+            except Exception as e:
+                b["error"] = str(e)[:160]
+
+        await asyncio.gather(*(run_img(*j) for j in img_jobs), *(run_map(b) for b in geo_tasks),
+                             *(run_live(k, b) for k, b in live_jobs), return_exceptions=True)
+        if opts.get("embed"):
+            try:
+                await asyncio.wait_for(_semantic_pass(session, spec, opts["embed"]), 4)
+            except Exception:
+                pass
     return spec
 
 
@@ -118,77 +173,20 @@ async def _owui_theme(__event_call__):
         return "dark"
 
 
-def _build_html(spec, theme, cdn):
+def _origin(url):
+    try:
+        u = urlparse(url)
+        return f"{u.scheme}://{u.netloc}" if u.scheme in ("http", "https") and u.netloc else ""
+    except Exception:
+        return ""
+
+
+def _build_html(spec, theme, cdn, tiles=""):
     nonce = secrets.token_urlsafe(16)
     cdn = cdn.rstrip("/")
-    host = "{0.scheme}://{0.netloc}".format(urlparse(cdn))
+    hosts = " ".join(sorted({h for h in (_origin(cdn), _origin(tiles)) if h}))
     html = _HTML.replace("__NONCE__", nonce).replace("__THEME__", "dark" if theme == "dark" else "light")
-    html = html.replace("__CDN__", cdn).replace("__CDNHOST__", host).replace("__SPEC__", _safe_json(spec))
-    return html
+    html = html.replace("__CDN__", cdn).replace("__CDNHOST__", hosts).replace("__TILESHOST__", _origin(tiles) or "https:")
+    return html.replace("__SPEC__", _safe_json(spec))
 
 
-class Tools:
-    """Intelligent UI: answer with a rich, ChatGPT-style visual card (photos, maps, places, itineraries, charts)."""
-
-    class Valves(BaseModel):
-        searxng_url: str = Field(default="http://searxng:8080", description="SearXNG base URL used for image search (JSON format enabled).")
-        maplibre_cdn: str = Field(default="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1", description="MapLibre GL JS package base URL.")
-        resolve_images: bool = Field(default=True, description="Resolve photo queries to real images (Wikipedia + SearXNG).")
-        resolve_maps: bool = Field(default=True, description="Geocode places (Photon/OSM) and draw street routes (OSRM).")
-
-    def __init__(self):
-        self.valves = self.Valves()
-
-    async def render_intelligent_ui(self, spec: str, __event_emitter__=None, __event_call__=None) -> tuple:
-        """
-        Show a rich visual answer (ChatGPT-style Intelligent UI) inside the chat. Use it whenever the answer has places, trips,
-        itineraries, products, people, comparisons, numbers, timelines or anything that reads better with photos, a map, cards,
-        a table or a chart. You write ONE JSON object; the tool finds real photos, geocodes places, draws street routes and renders it.
-        Never invent image URLs: give photo SEARCH QUERIES. For places give the real name plus your best lat/lng; the tool verifies them.
-        After the tool returns, reply with 1-2 sentences only (the card already shows everything); do not repeat its content or the JSON.
-
-        spec = {"title": str, "subtitle": str?, "sources": [{"title","url"}]?, "blocks": [Block...], "followups": [str, 2-4]}
-        Blocks (use 3-7, in reading order; mix types, lead with text, put the most visual block early):
-          {"type":"text","md":"markdown; **bold**, *italic*, [link](url), cite sources inline as [1] [2]"}
-          {"type":"images","items":[{"query":"Golden Gate Bridge from Baker Beach","caption":"Golden Gate"}]}  (3 photos best; specific queries)
-          {"type":"map","area":"San Francisco, CA","route":true,"places":[{"name":"Ferry Building","lat":37.7955,"lng":-122.3937,"icon":"⛴️","group":"Morning","note":"Coffee + market","time":"9:00"}]}
-              (2-12 places in visiting order; lat/lng = your best estimate, the tool snaps them to the real place; route draws the
-               street path; icon = one emoji; group optional e.g. Morning/Afternoon)
-          {"type":"places","area":"San Francisco","items":[{"name","subtitle","rating":4.6,"price":"$$","tags":["Views"],"description","url"?,"image":"photo query"?}]}
-          {"type":"timeline","items":[{"time":"9:00 AM","title","detail","place":"exact map place name"?}]}
-          {"type":"table","columns":["A","B"],"rows":[["1","2"]]}
-          {"type":"stats","items":[{"label","value","delta":"+4%"?,"tone":"up|down|neutral"?}]}
-          {"type":"chart","kind":"bar|line","labels":["2023","2024"],"series":[{"name","data":[1,2]}],"unit":"%"?}
-          {"type":"callout","tone":"info|tip|warning|danger","title","md"}
-          {"type":"compare","items":[{"title","points":["..."],"verdict":"..."?}]}   (2-3 columns: options, pros/cons)
-          {"type":"steps","items":[{"title","detail"}]}
-          {"type":"hero","image":"photo query","eyebrow","title","md"}
-          {"type":"quote","md","by"}
-        Rules: concise, scannable copy; real facts only; cite with [n] only when sources are given; for trips always include
-        images + map (route:true) + timeline whose "place" values match map place names exactly.
-
-        :param spec: The JSON object described above (as a JSON string).
-        :return: An interactive rich embed rendered inline in the chat.
-        """
-        try:
-            data = _loads_lenient(spec)
-        except Exception as e:
-            return f"Intelligent UI could not parse spec JSON ({e}). Fix the JSON and call render_intelligent_ui again."
-        if isinstance(data, list):
-            data = {"blocks": data}
-        if not isinstance(data, dict):
-            return "Intelligent UI spec must be a JSON object with a blocks array."
-        title = str(data.get("title") or "Response")[:120]
-        if __event_emitter__:
-            await __event_emitter__({"type": "status", "data": {"description": f"Building “{title}”…", "done": False}})
-        try:
-            await asyncio.wait_for(_resolve(data, self.valves.searxng_url, self.valves.resolve_images, self.valves.resolve_maps), 12)
-        except Exception:
-            pass
-        theme = await _owui_theme(__event_call__)
-        resp = HTMLResponse(content=_build_html(data, theme, self.valves.maplibre_cdn), headers={"Content-Disposition": "inline"})
-        if __event_emitter__:
-            await __event_emitter__({"type": "status", "data": {"description": f"Showing “{title}”", "done": True}})
-        kinds = [b.get("type") for b in data.get("blocks", []) if isinstance(b, dict)]
-        return resp, (f"Intelligent UI card “{title}” is rendered and visible to the user (blocks: {', '.join(map(str, kinds))}). "
-                      "Reply with one or two short sentences that add context; do not repeat the card or show JSON.")

@@ -38,8 +38,14 @@ and draws real street routes** — then renders a polished, theme-aware card inl
 | 🖼️ **Photo galleries** | Real images from Wikipedia + your SearXNG, three-up or scrolling, captions and lightbox. Broken or icon-sized hits fall back to the next candidate automatically. |
 | 🗺️ **Live street maps** | MapLibre GL + OpenFreeMap vector tiles, numbered / emoji pins with decluttered labels, **real walking routes** in a city (FOSSGIS) or driving routes for longer trips (OSRM), distance & time chip, group filter, fit & expand. |
 | 🧭 **Linked itinerary** | Click a timeline stop and the map flies to its pin; click a pin and the stop lights up. |
-| 🍝 **Place cards** | Photo, rating, price, neighborhood, tags and link — for restaurants, hotels, products or people. |
-| 📊 **Data blocks** | Stats tiles, bar & line charts, tables, compare columns, steps, callouts, hero banner, quotes. |
+| 🍝 **Place cards** | Photo, rating, price, neighborhood, tags and link — with sort and filter chips once there are four or more. |
+| 📅 **Multi-day trips** | Day tabs with one coloured street route per day, **Open in Google Maps**, and **Add to calendar** (Google or `.ics`). |
+| 💸 **Interactive tools** | Budget sliders with per-person totals and a cap, and calculators (mortgage, currency, anything) driven by safe formulas. |
+| 📈 **Live data** | Weather forecasts and stock / crypto / FX quotes with 1D·1M·1Y charts — keyless, fetched at answer time. |
+| 🔗 **Page previews** | Link cards with a real headless-Chromium screenshot, summary and reader view. |
+| 📝 **Real Office files** | Export any card to Word, PDF, Excel or PowerPoint built by the open-source [Craft apps](https://github.com/storytold) — photos and charts included — and open it on a streamed Craft desktop. |
+| ✉️ **Gmail & Notes** | Every card has Copy, Email (Gmail compose), Export and Save to Notes; `email` blocks become one-click Gmail drafts. |
+| 📊 **Data blocks** | Stats tiles, bar & line charts, sortable tables, compare columns, steps, callouts, hero banner, quotes, status boards. |
 | 🔗 **Citations & follow-ups** | Favicon citation chips, a sources row, and suggested next questions that send the prompt in one click. |
 | 🌗 **Feels native** | Follows Open WebUI's light / dark theme live, auto-sizes, and runs in a nonce-locked CSP sandbox. |
 | 🛟 **Forgiving** | Repairs fenced, truncated or trailing-comma JSON; caches lookups, limits concurrency and backs off on rate limits. |
@@ -59,9 +65,32 @@ and draws real street routes** — then renders a polished, theme-aware card inl
 | `searxng_url` | `http://searxng:8080` | SearXNG with the JSON format enabled, used for image search. Optional — Wikipedia still works without it. |
 | `maplibre_cdn` | `https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1` | MapLibre GL JS package. |
 | `resolve_images` / `resolve_maps` | `true` | Turn server-side photo or map resolution off. |
+| `tiles_url` | *(empty)* | Self-hosted basemap folder (`planet.pmtiles`, `fonts/`, `sprites/`, `js/`) — see below. Empty = OpenFreeMap. |
+| `live_data` · `temperature_unit` | `true` · `fahrenheit` | Live weather / quotes, and °F or °C. |
+| `embedding_url` | `openwebui` | Reuse Open WebUI's embedding engine to rerank photos and match itinerary rows to pins; or an OpenAI-compatible URL (+ `embedding_model`, `embedding_api_key`); empty = off. |
+| `craft_bridge_url` · `craft_bridge_token` | *(empty)* | The Craft bridge (real Office files, page screenshots). |
+| `craft_desktop_url` · `craft_web_url` | *(empty)* | Links shown on file cards and in the `apps` launcher. |
+| `page_screenshots` | `true` | Screenshots for link previews (needs the bridge). |
 
-**Requirements:** Open WebUI ≥ 0.6 (tested on 0.12.5). The server needs outbound HTTPS to Wikipedia, Photon / Nominatim
-(OpenStreetMap) and OSRM / FOSSGIS routing; the browser loads map tiles and photos.
+**Requirements:** Open WebUI ≥ 0.6 (tested on 0.12.5). Everything is keyless: the server needs outbound HTTPS to Wikipedia,
+Photon / Nominatim, OSRM / FOSSGIS, Open-Meteo and Yahoo Finance; the browser loads map tiles and photos. The add-ons below are optional.
+
+### 🏠 Optional self-hosted add-ons ([`server/`](server))
+
+| Add-on | What you get | How |
+|---|---|---|
+| **Planet basemap** | Maps served from your own box — no tile API to break. ~140 GB; an HDD is fine. | [`server/local-web/setup.sh`](server/local-web/setup.sh) downloads the Protomaps planet, fonts and JS; nginx serves them with range requests. |
+| **Craft desktop + bridge** | `craft_file` makes real `.docx/.xlsx/.pptx/.pdf` with WordCraft · GridCraft · DeckCraft, opens files in any of the 13 Craft apps, and takes page screenshots. | [`server/craft-apps`](server/craft-apps) — `linuxserver/craft-apps` plus [`bridge.py`](server/craft-bridge/bridge.py). **LAN only.** |
+| **Craft web apps** | All 13 apps + the ArtCraft Launcher as static web apps for the `apps` block. | Same `setup.sh`, served under `/craft/`. |
+
+### 🧰 Tool methods
+
+| Method | Use |
+|---|---|
+| `render_intelligent_ui(spec)` | The rich card. |
+| `craft_file(format, card=…)` | Word / PDF / Excel / PowerPoint / CSV from a card (by id) or from Markdown, rows or slides. |
+| `craft_open(url, app)` | Open a photo, PDF, SVG, audio or video in a Craft app on the desktop. |
+| `save_note(card=…)` | Save a card or Markdown to Open WebUI Notes. |
 
 ## 🧩 How it works
 
@@ -81,9 +110,12 @@ model ──► render_intelligent_ui(spec JSON)
 |---|---|
 | `text` | Markdown subset with `[1]` citation chips |
 | `images` | Photo search queries → gallery |
-| `map` | Places (name + best-guess lat/lng) → verified pins + street route |
-| `places` | Photo cards for restaurants, hotels, products, people |
-| `timeline` | Itinerary or history, linked to map places |
+| `map` | Places (name + best-guess lat/lng) → verified pins + street route; `days` for multi-day trips |
+| `places` | Photo cards for restaurants, hotels, products, people (sort + filter at 4+) |
+| `timeline` | Itinerary or history, linked to map places; `date` enables Add to calendar |
+| `budget` · `calculator` | Interactive sliders and formulas |
+| `weather` · `stock` | Live forecast and quotes |
+| `links` · `email` · `status` · `apps` | Page previews, Gmail drafts, health boards, Craft launcher |
 | `stats` · `chart` · `table` · `compare` · `steps` · `callout` · `hero` · `quote` | Everything else |
 
 <details>
@@ -109,8 +141,8 @@ A full example lives in [`examples/san-francisco.py`](examples/san-francisco.py)
 
 ## 🛠️ Development
 
-The tool ships as one file, built from readable parts in [`src/`](src): `p1.py`–`p2.py` are the Python resolver and tool,
-`p3.py`–`p5.py` the HTML / CSS / JS renderer.
+The tool ships as one file, built from readable parts in [`src/`](src): `p1`, `p2`, `p6` are the Python resolvers,
+`p3`–`p5` and `p7` the HTML / CSS / JS renderer, `p9` the tool class. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash
 ./src/build.sh   # rebuilds intelligent_ui.py
