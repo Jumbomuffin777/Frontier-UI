@@ -16,4 +16,4 @@ window.IUI={S:S,app:app,SRC:SRC,h:h,txt:txt,arr:arr,md:md,photo:photo,scroller:s
 _HTML = _HTML.replace(' onerror="this.remove()"', '').replace(
     ".ti .thumb img{width:100%;height:100%;object-fit:cover}",
     ".ti .thumb img{width:100%;height:100%;object-fit:cover}.ti .thumb .ph{aspect-ratio:auto;height:100%;border-radius:0}").replace(
-    "var p=new URL(String(u||''),location.href);", "var p=new URL(String(u||''),origin!=='*'?origin+'/':location.href);")
+    "var p=new URL(String(u||''),location.href);", "var B=(window.IUI&&IUI.UI&&IUI.UI.base)||(origin!=='*'?origin:'');var s=String(u||'');if(s.charAt(0)==='/'&&s.charAt(1)!=='/'&&B)s=(B.slice(-1)==='/'?B.slice(0,-1):B)+s;var p=new URL(s,B?B+'/':location.href);")

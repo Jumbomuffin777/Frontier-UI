@@ -1,7 +1,7 @@
 """
 title: Frontier UI
 author: Zability (Claude Opus 5.5); inspired by ChatGPT Intelligent UI and thesysdev/open-intelligent-ui (MIT)
-version: 1.2.0
+version: 1.2.1
 description: ChatGPT-style generative UI: photo galleries, street maps with multi-day routes (self-hosted planet tiles), filterable place cards, itineraries, budgets, calculators, live weather and quotes, link previews, Gmail drafts, calendar export, real Word/Excel/PowerPoint/PDF files, and reading + editing your uploaded files with all 15 ArtCraft apps.
 required_open_webui_version: 0.6.0
 """
@@ -1298,7 +1298,7 @@ window.IUI={S:S,app:app,SRC:SRC,h:h,txt:txt,arr:arr,md:md,photo:photo,scroller:s
 _HTML = _HTML.replace(' onerror="this.remove()"', '').replace(
     ".ti .thumb img{width:100%;height:100%;object-fit:cover}",
     ".ti .thumb img{width:100%;height:100%;object-fit:cover}.ti .thumb .ph{aspect-ratio:auto;height:100%;border-radius:0}").replace(
-    "var p=new URL(String(u||''),location.href);", "var p=new URL(String(u||''),origin!=='*'?origin+'/':location.href);")
+    "var p=new URL(String(u||''),location.href);", "var B=(window.IUI&&IUI.UI&&IUI.UI.base)||(origin!=='*'?origin:'');var s=String(u||'');if(s.charAt(0)==='/'&&s.charAt(1)!=='/'&&B)s=(B.slice(-1)==='/'?B.slice(0,-1):B)+s;var p=new URL(s,B?B+'/':location.href);")
 
 
 _HTML += r'''<style>
@@ -1814,7 +1814,12 @@ class Tools:
         v = self.valves
         return {"url": v.craft_bridge_url, "token": v.craft_bridge_token, "shots": v.page_screenshots} if v.craft_bridge_url and v.craft_bridge_token else None
 
-    async def _card(self, spec, __event_call__):
+    async def _card(self, spec, __event_call__, req=None):
+        try:
+            if req is not None:
+                spec.setdefault("_ui", {})["base"] = str(req.base_url).rstrip("/")
+        except Exception:
+            pass
         theme = await _owui_theme(__event_call__)
         return HTMLResponse(content=_build_html(spec, theme, self.valves.maplibre_cdn, self.valves.tiles_url), headers={"Content-Disposition": "inline"})
 
@@ -1890,7 +1895,7 @@ class Tools:
         _CARDS[card] = data
         while len(_CARDS) > 300:
             _CARDS.pop(next(iter(_CARDS)))
-        resp = await self._card(data, __event_call__)
+        resp = await self._card(data, __event_call__, __request__)
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"Showing “{title}”", "done": True}})
         kinds = [b.get("type") for b in data.get("blocks", []) if isinstance(b, dict)]
@@ -1900,7 +1905,7 @@ class Tools:
 
     # ---------------- 2. real Office files via the Craft apps ----------------
     async def craft_file(self, format: str, card: str = "", title: str = "", markdown: str = "", rows_json: str = "", slides_json: str = "",
-                         open_in_desktop: bool = False, __user__: dict = None, __event_emitter__=None, __event_call__=None) -> tuple:
+                         open_in_desktop: bool = False, __user__: dict = None, __event_emitter__=None, __event_call__=None, __request__=None) -> tuple:
         """
         Create a real, downloadable file with the Craft apps (WordCraft / GridCraft / DeckCraft) and show a download card.
         Use it when the user asks for a Word document, PDF, Excel spreadsheet, PowerPoint deck, CSV, or to export / "make a file of"
@@ -1966,14 +1971,14 @@ class Tools:
                  "opened": bool(res.get("opened")), "inbox": bool(res.get("path"))}
         ui = self._ui()
         ui["actions"] = False
-        resp = await self._card({"blocks": [block], "_ui": ui}, __event_call__)
+        resp = await self._card({"blocks": [block], "_ui": ui}, __event_call__, __request__)
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"{res['name']} is ready", "done": True}})
         return resp, (f"The file {res['name']} ({len(data) // 1024 + 1} KB, made with {block['app_name']}) was created and a download card is shown"
                       + (" ; it is also open in the Craft desktop" if block["opened"] else "") + ". Reply with one short sentence; do not paste links.")
 
     # ---------------- 3. open anything in a Craft app ----------------
-    async def craft_open(self, url: str, app: str = "", __event_emitter__=None, __event_call__=None) -> tuple:
+    async def craft_open(self, url: str, app: str = "", __event_emitter__=None, __event_call__=None, __request__=None) -> tuple:
         """
         Open a public image, PDF, SVG, audio or video URL in a Craft app on the streamed Craft desktop
         (PhotoCraft/LightCraft for photos, PdfCraft for PDFs, VectorCraft for SVG, FilmCraft for video, SoundCraft for audio).
@@ -1992,11 +1997,11 @@ class Tools:
         ui["actions"] = False
         block = {"type": "file", "name": os.path.basename(res.get("path", "file")), "format": res.get("path", "").rsplit(".", 1)[-1],
                  "app": a, "app_name": CRAFT_APPS.get(a, (a,))[0], "opened": True, "inbox": True}
-        resp = await self._card({"blocks": [block], "_ui": ui}, __event_call__)
+        resp = await self._card({"blocks": [block], "_ui": ui}, __event_call__, __request__)
         return resp, f"Opened in {block['app_name']} on the Craft desktop (saved to ~/Inbox). Reply with one short sentence."
 
     # ---------------- 4. Open WebUI notes ----------------
-    async def save_note(self, title: str = "", markdown: str = "", card: str = "", __user__: dict = None, __event_call__=None) -> tuple:
+    async def save_note(self, title: str = "", markdown: str = "", card: str = "", __user__: dict = None, __event_call__=None, __request__=None) -> tuple:
         """
         Save something to the user's Open WebUI Notes. Use it for "save this", "add to my notes", "Save the Frontier UI card … to my Notes"
         (then pass card="<card id>").
@@ -2017,17 +2022,17 @@ class Tools:
             return f"Saving the note failed: {e}"
         ui = self._ui()
         ui["actions"] = False
-        resp = await self._card({"blocks": [{"type": "note", "name": name, "url": f"/notes/{nid}" if nid else ""}], "_ui": ui}, __event_call__)
+        resp = await self._card({"blocks": [{"type": "note", "name": name, "url": f"/notes/{nid}" if nid else ""}], "_ui": ui}, __event_call__, __request__)
         return resp, f"Saved to Notes as “{name}”. Reply with one short sentence."
 
     # ---------------- 5. read / edit / convert the user's own files with any ArtCraft app ----------------
-    async def _file_card(self, block, __event_call__):
+    async def _file_card(self, block, __event_call__, req=None):
         ui = self._ui()
         ui["actions"] = False
-        return await self._card({"blocks": [block], "_ui": ui}, __event_call__)
+        return await self._card({"blocks": [block], "_ui": ui}, __event_call__, req)
 
     async def craft_read(self, file: str = "", __user__: dict = None, __files__: list = None, __messages__: list = None,
-                         __event_emitter__=None, __event_call__=None) -> tuple:
+                         __event_emitter__=None, __event_call__=None, __request__=None) -> tuple:
         """
         Open a file the user uploaded (or one made earlier in this chat) with the matching ArtCraft app and read it:
         Word/ODT/RTF (WordCraft), Excel/CSV with formulas (GridCraft), PowerPoint (DeckCraft), PDF (PdfCraft), images and PSD
@@ -2055,7 +2060,7 @@ class Tools:
         block = {"type": "file", "name": name, "format": name.rsplit(".", 1)[-1].lower() if "." in name else "", "size": len(data),
                  "url": f"/api/v1/files/{fid}/content", "app": app, "app_name": CRAFT_APPS.get(app, (app,))[0], "mode": "read",
                  "preview": ("data:image/jpeg;base64," + r["preview"]) if r.get("preview") else "", "excerpt": text[:1500]}
-        resp = await self._file_card(block, __event_call__)
+        resp = await self._file_card(block, __event_call__, __request__)
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"Read {name} with {block['app_name']}", "done": True}})
         ctx = [f"File “{name}” (id {fid}, {len(data) // 1024 + 1} KB) opened with {block['app_name']}. A preview card is shown."]
@@ -2071,7 +2076,7 @@ class Tools:
 
     async def craft_edit(self, file: str = "", commands_json: str = "", replace_json: str = "", cells_json: str = "",
                          output_name: str = "", open_in_desktop: bool = False, __user__: dict = None, __files__: list = None,
-                         __messages__: list = None, __event_emitter__=None, __event_call__=None) -> tuple:
+                         __messages__: list = None, __event_emitter__=None, __event_call__=None, __request__=None) -> tuple:
         """
         Edit a file the user uploaded (or one made earlier) with its ArtCraft app, headlessly, and give back the edited copy as a
         download (the original is never changed). Works for Word/ODT/RTF, Excel/CSV, PowerPoint, PDF, images, RAW photos, SVG,
@@ -2144,14 +2149,14 @@ class Tools:
         block = {"type": "file", "name": r["name"], "format": r["name"].rsplit(".", 1)[-1].lower(), "size": len(out), "url": url, "app": a,
                  "app_name": CRAFT_APPS.get(a, (a,))[0], "maker": CRAFT_APPS.get(a, (a,))[0], "opened": opened, "mode": "edit",
                  "preview": ("data:image/jpeg;base64," + prev) if prev else "", "note": f"Edited copy of {name} · {len(steps)} change(s)"}
-        resp = await self._file_card(block, __event_call__)
+        resp = await self._file_card(block, __event_call__, __request__)
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"{r['name']} is ready", "done": True}})
         return resp, (f"Edited copy saved as “{r['name']}” (id {fid2}); the original is unchanged. A download card is shown. "
                       "To make more changes, call craft_edit on the new file name. Reply with one short sentence.")
 
     async def craft_convert(self, file: str = "", format: str = "pdf", __user__: dict = None, __files__: list = None,
-                            __messages__: list = None, __event_emitter__=None, __event_call__=None) -> tuple:
+                            __messages__: list = None, __event_emitter__=None, __event_call__=None, __request__=None) -> tuple:
         """
         Convert a file the user uploaded (or made earlier) to another format with its ArtCraft app:
         docx<->pdf/odt/rtf/md/html/txt, pptx->pdf/md, xlsx<->csv/pdf/html, pdf->docx/txt/png, images (psd, png, jpg, webp, tif…),
@@ -2172,7 +2177,7 @@ class Tools:
         a = r.get("app", "")
         block = {"type": "file", "name": r["name"], "format": r["name"].rsplit(".", 1)[-1].lower(), "size": len(out), "url": url, "app": a,
                  "app_name": CRAFT_APPS.get(a, (a,))[0], "maker": CRAFT_APPS.get(a, (a,))[0], "note": f"Converted from {name}"}
-        return await self._file_card(block, __event_call__), f"Converted {name} to {r['name']}; a download card is shown. Reply with one short sentence."
+        return await self._file_card(block, __event_call__, __request__), f"Converted {name} to {r['name']}; a download card is shown. Reply with one short sentence."
 
     async def craft_commands(self, app: str, search: str = "") -> str:
         """

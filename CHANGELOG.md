@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1 — 2026-11-01
+- Fix: Download / Open note buttons now work (links are made absolute using your Open WebUI address).
+- Self-hosted Craft web apps: serve precompressed .wasm (gzip_static) so WordCraft & co. load much faster.
+
 ## 1.2.0 — 2026-11-01
 **Read and edit your own files with all 15 ArtCraft apps.**
 - `craft_read` — open any attached file with its app and get its text, formulas, slides, structure and a preview card:
