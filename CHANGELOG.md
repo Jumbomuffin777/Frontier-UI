@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0 — 2026-11-01
+**Read and edit your own files with all 15 ArtCraft apps.**
+- `craft_read` — open any attached file with its app and get its text, formulas, slides, structure and a preview card:
+  WordCraft (docx/odt/rtf/md), GridCraft (xlsx/csv/ods, with formulas), DeckCraft (pptx), PdfCraft, PhotoCraft (png/jpg/psd/webp…),
+  LightCraft (RAW), VectorCraft (svg/ai/eps), CADCraft (dxf/dwg), SolidCraft (step/stl/3mf), FigCraft (fig/sketch/penpot),
+  DesignCraft (idml), SoundCraft (audio), FilmCraft (video), EffectCraft projects, and Craft Anything for everything else (zip, apps, binaries).
+- `craft_edit` — headless edits into a new downloadable copy (originals are never touched): `replace_json` for documents,
+  `cells_json` for spreadsheets, PDF page ops (rotate/delete/move/extract/combine), or any app engine command list.
+- `craft_convert` — format conversion through the apps (docx↔pdf, pptx→pdf, xlsx↔csv, pdf→docx, psd→png, dxf→pdf, step→stl, wav→flac…).
+- `craft_commands` — searchable command catalogue for every app.
+- Added **SolidCraft** and **Craft Anything** to the desktop, the web apps and the `apps` launcher.
+- Files are resolved from the chat's attachments; access is limited to the user's own files.
+
 ## 1.1.1 — 2026-11-01
 - **Renamed to Frontier UI** (formerly Intelligent WebUI). The tool file is now `frontier_ui.py`, the tool id `frontier_ui`
   and the main method `render_frontier_ui`. Upgrading: install the new file, copy your valves over, and enable it on your

@@ -2,7 +2,7 @@
 
 class Tools:
     """Frontier UI: rich, ChatGPT-style visual answers (photos, maps, places, itineraries, charts, live data) plus real
-    Word/Excel/PowerPoint/PDF files made with the Craft apps, Gmail drafts and Open WebUI notes."""
+    Word/Excel/PowerPoint/PDF files made, read and edited with all 15 ArtCraft apps, Gmail drafts and Open WebUI notes."""
 
     class Valves(BaseModel):
         searxng_url: str = Field(default="http://searxng:8080", description="SearXNG base URL used for image search (JSON format enabled).")
@@ -199,7 +199,7 @@ class Tools:
         (PhotoCraft/LightCraft for photos, PdfCraft for PDFs, VectorCraft for SVG, FilmCraft for video, SoundCraft for audio).
 
         :param url: public http(s) URL of the file.
-        :param app: optional app id: photocraft, lightcraft, pdfcraft, vectorcraft, filmcraft, soundcraft, wordcraft, gridcraft, deckcraft, cadcraft.
+        :param app: optional app id: photocraft, lightcraft, pdfcraft, vectorcraft, filmcraft, soundcraft, wordcraft, gridcraft, deckcraft, cadcraft, solidcraft, figcraft, designcraft, effectcraft, craft-anything.
         :return: A card confirming where it opened.
         """
         try:
@@ -239,3 +239,174 @@ class Tools:
         ui["actions"] = False
         resp = await self._card({"blocks": [{"type": "note", "name": name, "url": f"/notes/{nid}" if nid else ""}], "_ui": ui}, __event_call__)
         return resp, f"Saved to Notes as “{name}”. Reply with one short sentence."
+
+    # ---------------- 5. read / edit / convert the user's own files with any ArtCraft app ----------------
+    async def _file_card(self, block, __event_call__):
+        ui = self._ui()
+        ui["actions"] = False
+        return await self._card({"blocks": [block], "_ui": ui}, __event_call__)
+
+    async def craft_read(self, file: str = "", __user__: dict = None, __files__: list = None, __messages__: list = None,
+                         __event_emitter__=None, __event_call__=None) -> tuple:
+        """
+        Open a file the user uploaded (or one made earlier in this chat) with the matching ArtCraft app and read it:
+        Word/ODT/RTF (WordCraft), Excel/CSV with formulas (GridCraft), PowerPoint (DeckCraft), PDF (PdfCraft), images and PSD
+        (PhotoCraft), RAW photos (LightCraft), SVG/AI/EPS (VectorCraft), DXF/DWG (CADCraft), STEP/STL/3MF (SolidCraft),
+        Figma/Sketch/Penpot (FigCraft), IDML (DesignCraft), audio (SoundCraft), video (FilmCraft), EffectCraft projects, and any
+        other file or app bundle (Craft Anything's first look). Use it before answering questions about an attached file or
+        before editing it. Shows a preview card and returns the file's text, structure and metadata to you.
+
+        :param file: file name (or part of it) or file id; empty = the most recently attached file.
+        :return: A preview card; the extracted content is returned to you.
+        """
+        try:
+            name, data, fid = await _load_file(file, __files__, __messages__, __user__)
+        except Exception as e:
+            return str(e)
+        if __event_emitter__:
+            await __event_emitter__({"type": "status", "data": {"description": f"Reading {name}…", "done": False}})
+        try:
+            async with aiohttp.ClientSession() as session:
+                r = await _bridge_call(session, self._bridge(), "/inspect", {"name": name, "b64": base64.b64encode(data).decode()}, 240)
+        except Exception as e:
+            return f"Could not read {name}: {e}"
+        app = r.get("app", "")
+        text, info = (r.get("text") or "").strip(), (r.get("info") or "").strip()
+        block = {"type": "file", "name": name, "format": name.rsplit(".", 1)[-1].lower() if "." in name else "", "size": len(data),
+                 "url": f"/api/v1/files/{fid}/content", "app": app, "app_name": CRAFT_APPS.get(app, (app,))[0], "mode": "read",
+                 "preview": ("data:image/jpeg;base64," + r["preview"]) if r.get("preview") else "", "excerpt": text[:1500]}
+        resp = await self._file_card(block, __event_call__)
+        if __event_emitter__:
+            await __event_emitter__({"type": "status", "data": {"description": f"Read {name} with {block['app_name']}", "done": True}})
+        ctx = [f"File “{name}” (id {fid}, {len(data) // 1024 + 1} KB) opened with {block['app_name']}. A preview card is shown."]
+        if text:
+            ctx.append("CONTENT:\n" + text[:14000] + ("\n…(truncated)" if len(text) > 14000 else ""))
+        if r.get("formulas"):
+            ctx.append("FORMULAS (CSV):\n" + r["formulas"][:4000])
+        if info:
+            ctx.append("STRUCTURE / METADATA:\n" + info[:5000])
+        if app not in ("craft-anything",):
+            ctx.append(f"To change it, call craft_edit(file=\"{name}\", commands_json=...) — look up {app} command ids with craft_commands(app=\"{app}\", search=...) first.")
+        return resp, "\n\n".join(ctx)
+
+    async def craft_edit(self, file: str = "", commands_json: str = "", replace_json: str = "", cells_json: str = "",
+                         output_name: str = "", open_in_desktop: bool = False, __user__: dict = None, __files__: list = None,
+                         __messages__: list = None, __event_emitter__=None, __event_call__=None) -> tuple:
+        """
+        Edit a file the user uploaded (or one made earlier) with its ArtCraft app, headlessly, and give back the edited copy as a
+        download (the original is never changed). Works for Word/ODT/RTF, Excel/CSV, PowerPoint, PDF, images, RAW photos, SVG,
+        DXF/DWG, STEP/STL, Figma/Sketch, IDML, audio and video. Read the file with craft_read first.
+
+        Shortcuts (no command lookup needed):
+          replace_json  Word documents: {"old text": "new text", ...}  (every occurrence)
+          cells_json    spreadsheets: {"B4": "=SUM(B2:B3)", "A4": "Total", "Sheet2!C1": 5}
+        Anything else: commands_json = JSON list of the app's engine commands, run in order:
+          [{"command": "edit.replaceAll", "params": {"text": "2025", "with": "2026"}}]
+          Find ids and params with craft_commands(app, search). Common ones: WordCraft text.insert {text, paragraphs?},
+          select.text {text}, edit.replaceAll {text, with}; GridCraft cell.set {cell, input, sheet?}, range.setValues {range, values};
+          DeckCraft slide.new {layout, title, body, at?}, slide.delete {index}, slide.notes {text, index?}, insert.chart {...};
+          PdfCraft ops: rotate {pages, angle}, delete {pages}, move {from, to}, extract {pages}, insert-blank {after}, title {value}.
+
+        :param file: file name (or part of it) or id; empty = the latest file.
+        :param commands_json: JSON list of {"command", "params"} for the file's app.
+        :param replace_json: JSON object of find -> replace pairs (documents).
+        :param cells_json: JSON object of cell -> value or formula (spreadsheets).
+        :param output_name: name for the edited copy (extension may change the format), default "<name> (edited)".
+        :param open_in_desktop: also open the result in its app on the Craft desktop.
+        :return: A download card for the edited file.
+        """
+        try:
+            name, data, fid = await _load_file(file, __files__, __messages__, __user__)
+            steps = json.loads(commands_json) if commands_json.strip() else []
+            if isinstance(steps, dict):
+                steps = [steps]
+            for old, new in (json.loads(replace_json) if replace_json.strip() else {}).items():
+                steps.append({"command": "edit.replaceAll", "params": {"text": str(old), "with": str(new)}})
+            for cell, val in (json.loads(cells_json) if cells_json.strip() else {}).items():
+                sheet, _, ref = str(cell).rpartition("!")
+                p = {"cell": ref, "input": val if isinstance(val, str) else json.dumps(val)}
+                if sheet:
+                    p["sheet"] = sheet.strip("'")
+                steps.append({"command": "cell.set", "params": p})
+        except json.JSONDecodeError as e:
+            return f"The edit JSON is invalid ({e}). Fix it and call craft_edit again."
+        except Exception as e:
+            return str(e)
+        if not steps:
+            return "Nothing to do: pass commands_json, replace_json or cells_json."
+        app = CRAFT_EXT.get(name.rsplit(".", 1)[-1].lower(), "")
+        if __event_emitter__:
+            await __event_emitter__({"type": "status", "data": {"description": f"Editing {name} with {CRAFT_APPS.get(app, (app or 'Craft',))[0]}…", "done": False}})
+        try:
+            async with aiohttp.ClientSession() as session:
+                r = await _bridge_call(session, self._bridge(), "/edit", {"name": name, "b64": base64.b64encode(data).decode(),
+                                                                          "commands": steps, "out": output_name or ""}, 300)
+                out = base64.b64decode(r["b64"])
+                fid2, url = await _store_file(__user__ or {}, r["name"], out, r.get("mime") or "application/octet-stream")
+                prev = None
+                try:
+                    pr = await _bridge_call(session, self._bridge(), "/inspect", {"name": r["name"], "b64": r["b64"]}, 120)
+                    prev = pr.get("preview")
+                except Exception:
+                    pass
+                opened = False
+                if open_in_desktop:
+                    try:
+                        await _bridge_call(session, self._bridge(), "/open", {"name": r["name"], "b64": r["b64"]}, 60)
+                        opened = True
+                    except Exception:
+                        pass
+        except Exception as e:
+            if __event_emitter__:
+                await __event_emitter__({"type": "status", "data": {"description": "Edit failed", "done": True}})
+            return f"Editing {name} failed: {e}. Check the command ids/params with craft_commands and try again."
+        a = r.get("app", app)
+        block = {"type": "file", "name": r["name"], "format": r["name"].rsplit(".", 1)[-1].lower(), "size": len(out), "url": url, "app": a,
+                 "app_name": CRAFT_APPS.get(a, (a,))[0], "maker": CRAFT_APPS.get(a, (a,))[0], "opened": opened, "mode": "edit",
+                 "preview": ("data:image/jpeg;base64," + prev) if prev else "", "note": f"Edited copy of {name} · {len(steps)} change(s)"}
+        resp = await self._file_card(block, __event_call__)
+        if __event_emitter__:
+            await __event_emitter__({"type": "status", "data": {"description": f"{r['name']} is ready", "done": True}})
+        return resp, (f"Edited copy saved as “{r['name']}” (id {fid2}); the original is unchanged. A download card is shown. "
+                      "To make more changes, call craft_edit on the new file name. Reply with one short sentence.")
+
+    async def craft_convert(self, file: str = "", format: str = "pdf", __user__: dict = None, __files__: list = None,
+                            __messages__: list = None, __event_emitter__=None, __event_call__=None) -> tuple:
+        """
+        Convert a file the user uploaded (or made earlier) to another format with its ArtCraft app:
+        docx<->pdf/odt/rtf/md/html/txt, pptx->pdf/md, xlsx<->csv/pdf/html, pdf->docx/txt/png, images (psd, png, jpg, webp, tif…),
+        RAW photo->jpg/png, svg/ai/eps<->pdf/png/svg, dxf<->dwg/svg/pdf/png, step/stl conversions, audio (wav/flac/aiff), video export.
+
+        :param file: file name (or part of it) or id; empty = the latest file.
+        :param format: target extension, e.g. pdf, docx, png, csv, flac.
+        :return: A download card for the converted file.
+        """
+        try:
+            name, data, _ = await _load_file(file, __files__, __messages__, __user__)
+            async with aiohttp.ClientSession() as session:
+                r = await _bridge_call(session, self._bridge(), "/convert", {"name": name, "b64": base64.b64encode(data).decode(), "format": format}, 300)
+            out = base64.b64decode(r["b64"])
+            fid2, url = await _store_file(__user__ or {}, r["name"], out, r.get("mime") or "application/octet-stream")
+        except Exception as e:
+            return f"Converting failed: {e}"
+        a = r.get("app", "")
+        block = {"type": "file", "name": r["name"], "format": r["name"].rsplit(".", 1)[-1].lower(), "size": len(out), "url": url, "app": a,
+                 "app_name": CRAFT_APPS.get(a, (a,))[0], "maker": CRAFT_APPS.get(a, (a,))[0], "note": f"Converted from {name}"}
+        return await self._file_card(block, __event_call__), f"Converted {name} to {r['name']}; a download card is shown. Reply with one short sentence."
+
+    async def craft_commands(self, app: str, search: str = "") -> str:
+        """
+        Look up the engine commands (ids and parameters) an ArtCraft app accepts, for craft_edit.
+        Apps: wordcraft, gridcraft, deckcraft, pdfcraft, photocraft, lightcraft, vectorcraft, designcraft, figcraft, filmcraft,
+        effectcraft, soundcraft, cadcraft, solidcraft. Always pass a search (e.g. "replace", "cell", "slide", "resize", "export").
+
+        :param app: the app id.
+        :param search: words that must appear in the command (id, label or parameters).
+        :return: Matching commands with their parameters.
+        """
+        try:
+            async with aiohttp.ClientSession() as session:
+                r = await _bridge_call(session, self._bridge(), "/commands", {"app": app.lower().strip(), "search": search}, 90)
+            return f"{app} commands matching '{search}':\n{r.get('commands', '')}"
+        except Exception as e:
+            return f"Could not list commands: {e}"

@@ -57,7 +57,9 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface2);color:var(--fg);border-radius:10px;padding:6px 12px;font:600 13px inherit;cursor:pointer}
 .btn.pri{background:var(--fg);color:var(--surface2);border-color:var(--fg)}.btn:hover{filter:brightness(1.06)}
-.file{display:flex;gap:14px;align-items:center}.file .fi{width:52px;height:64px;border-radius:9px;display:flex;align-items:center;justify-content:center;font:700 12px ui-monospace,Menlo,monospace;color:#fff;flex:none}
+.file{display:flex;gap:14px;align-items:center}
+.fprev{display:block;max-width:100%;max-height:420px;margin-top:12px;border-radius:10px;border:1px solid var(--line);background:#fff;cursor:pointer}
+.fex{margin-top:10px}.fex summary{cursor:pointer;font-size:12.5px;color:var(--muted)}.fex pre{white-space:pre-wrap;font:12.5px/1.5 ui-monospace,Menlo,monospace;background:var(--surface2);border-radius:10px;padding:10px;margin-top:6px;max-height:260px;overflow:auto}.file .fi{width:52px;height:64px;border-radius:9px;display:flex;align-items:center;justify-content:center;font:700 12px ui-monospace,Menlo,monospace;color:#fff;flex:none}
 .sts{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
 .sti{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:9px 11px}.sti .n{font-weight:600;font-size:13px;display:flex;align-items:center;gap:7px}
 .sti .n i{width:8px;height:8px;border-radius:50%;flex:none}.sti .d{font-size:12px;color:var(--muted);margin-top:2px}.sti .v{font:600 13px ui-monospace,Menlo,monospace;margin-top:3px}
@@ -208,7 +210,9 @@ X.apps=function(b){var w=h('div','blk');if(b.title)w.appendChild(label(b.title))
  if(UI.craft_web){var l=h('button','btn',[txt('span','','ArtCraft Launcher')]);l.onclick=function(){I.openLink(craftWeb('launcher'));};bt.appendChild(l);}w.appendChild(bt);return w;};
 var FCOL={docx:'#2b579a',odt:'#2b579a',rtf:'#2b579a',pdf:'#d93025',xlsx:'#217346',csv:'#217346',pptx:'#d24726',gif:'#8b5cf6',md:'#555',html:'#e44d26'};
 X.file=function(b){var w=h('div','blk');var p=h('div','panel');var f=h('div','file');var fi=txt('div','fi',String(b.format||'').toUpperCase());fi.style.background=FCOL[b.format]||'#555';f.appendChild(fi);
- var t=h('div','');t.appendChild(txt('div','',b.name||'file'));t.style.fontWeight='620';var meta=[b.size?(b.size>1e6?(b.size/1e6).toFixed(1)+' MB':Math.max(1,Math.round(b.size/1e3))+' KB'):'',(b.maker||b.app_name)?'made with '+(b.maker||b.app_name):''].filter(Boolean).join(' · ');t.appendChild(txt('div','faint',meta));if(b.opened)t.appendChild(txt('div','up','Opened in '+b.app_name+' on the Craft desktop'));f.appendChild(t);p.appendChild(f);
+ var t=h('div','');t.appendChild(txt('div','',b.name||'file'));t.style.fontWeight='620';var meta=[b.size?(b.size>1e6?(b.size/1e6).toFixed(1)+' MB':Math.max(1,Math.round(b.size/1e3))+' KB'):'',b.maker?'made with '+b.maker:''].filter(Boolean).join(' · ');t.appendChild(txt('div','faint',meta));if(b.note)t.appendChild(txt('div','faint',b.note));if(b.mode==='read')t.appendChild(txt('div','faint','Opened with '+(b.app_name||'Craft')));if(b.opened)t.appendChild(txt('div','up','Opened in '+b.app_name+' on the Craft desktop'));f.appendChild(t);p.appendChild(f);
+ if(b.preview){var pv=document.createElement('img');pv.src=b.preview;pv.alt='Preview of '+(b.name||'file');pv.className='fprev';pv.onclick=function(){I.openLink(b.url||'');};p.appendChild(pv);}
+ if(b.excerpt){var ex=h('details','fex');ex.appendChild(txt('summary','','Contents'));ex.appendChild(txt('pre','',b.excerpt+(b.excerpt.length>=1500?'\n…':'')));p.appendChild(ex);}
  var bt=h('div','btns');if(b.url){var dl=h('button','btn pri',[icon('dl'),txt('span','','Download')]);dl.onclick=function(){I.openLink(b.url);};bt.appendChild(dl);}
  if(UI.craft_desktop&&b.app){var d=h('button','btn',[icon('ext'),txt('span','',(b.opened?'Go to ':'Open ')+(b.app_name||'Craft')+' desktop')]);d.onclick=function(){I.openLink(UI.craft_desktop);};bt.appendChild(d);}
  if(b.app&&craftWeb(b.app)){var wb=h('button','btn',[txt('span','',(b.app_name||'Craft')+' web')]);wb.title='Opens the web app; drag the downloaded file in';wb.onclick=function(){I.openLink(craftWeb(b.app));};bt.appendChild(wb);}

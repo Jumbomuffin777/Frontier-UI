@@ -22,7 +22,20 @@ CRAFT_APPS = {
     "vectorcraft": ("VectorCraft", "Vector illustration", "✒️"), "designcraft": ("DesignCraft", "Page layout", "📰"),
     "figcraft": ("FigCraft", "UI design & prototyping", "🧩"), "filmcraft": ("FilmCraft", "Video editing", "🎬"),
     "effectcraft": ("EffectCraft", "Motion graphics & VFX", "✨"), "soundcraft": ("SoundCraft", "Audio recording & mixing", "🎚️"),
-    "cadcraft": ("CADCraft", "CAD drafting", "📐"),
+    "cadcraft": ("CADCraft", "CAD drafting", "📐"), "solidcraft": ("SolidCraft", "Parametric 3D CAD", "🧊"),
+    "craft-anything": ("Craft Anything", "See how any software works", "🔍"),
+}
+CRAFT_EXT = {  # file extension -> app that reads / edits it (mirrors the bridge)
+    **{e: "wordcraft" for e in "docx doc odt rtf md dotx docm tex txt".split()},
+    **{e: "gridcraft" for e in "xlsx xlsm xlsb csv tsv ods".split()},
+    **{e: "deckcraft" for e in "pptx potx ppsx deckcraft".split()},
+    **{e: "cadcraft" for e in "dxf dwg dwt".split()}, **{e: "solidcraft" for e in "step stp stl 3mf iges igs sc".split()},
+    **{e: "soundcraft" for e in "wav flac mp3 mid aif aiff ogg m4a aac scraft".split()}, "pdf": "pdfcraft",
+    **{e: "vectorcraft" for e in "svg ai eps emf".split()},
+    **{e: "photocraft" for e in "png jpg jpeg webp psd gif bmp tif tiff avif kra pcraft exr".split()},
+    **{e: "filmcraft" for e in "mp4 mov webm mkv avi mxf".split()}, "idml": "designcraft",
+    **{e: "figcraft" for e in "fig figcraft sketch penpot".split()},
+    **{e: "lightcraft" for e in "dng heic cr2 cr3 nef arw raf orf rw2 pef".split()}, "ecproj": "effectcraft",
 }
 FORMAT_KIND = {"docx": "doc", "pdf": "doc", "odt": "doc", "rtf": "doc", "html": "doc", "md": "doc", "txt": "doc",
                "xlsx": "sheet", "csv": "sheet", "pptx": "deck", "gif": "deck"}
@@ -319,6 +332,67 @@ async def _bridge_call(session, cfg, path, payload, timeout=60):
         return j
 
 
+# ---------- the user's uploaded files (for reading / editing with the Craft apps) ----------
+_MADE: dict = {}  # name/id -> Open WebUI file id of files this tool produced, so edits can be chained
+
+
+def _file_refs(__files__, __messages__, uid=""):
+    """Every file the conversation knows about, newest first: [{id, name}]"""
+    out, seen = [], set()
+
+    def add(f):
+        if not isinstance(f, dict):
+            return
+        inner = f.get("file") if isinstance(f.get("file"), dict) else {}
+        fid = f.get("id") or inner.get("id")
+        name = f.get("name") or inner.get("filename") or (inner.get("meta") or {}).get("name") or ""
+        if fid and fid not in seen and f.get("type", "file") in ("file", "doc", "image", None, ""):
+            seen.add(fid)
+            out.append({"id": fid, "name": name})
+
+    for f in reversed(__files__ or []):
+        add(f)
+    for m in reversed(__messages__ or []):
+        for f in reversed((m or {}).get("files") or []):
+            add(f)
+    for k, fid in reversed(list(_MADE.items())):
+        owner, _, name = k.partition("|")
+        if owner == uid and fid not in seen:
+            seen.add(fid)
+            out.append({"id": fid, "name": name})
+    return out
+
+
+async def _load_file(ref, __files__, __messages__, user):
+    """Find one of the user's files by id, (partial) name or 'latest'; return (name, bytes, id)."""
+    from open_webui.models.files import Files
+    from open_webui.storage.provider import Storage
+    uid = (user or {}).get("id", "")
+    refs = _file_refs(__files__, __messages__, uid)
+    ref = str(ref or "").strip()
+    pick = None
+    if ref:
+        low = ref.lower().split("/")[-1]
+        pick = next((r for r in refs if r["id"] == ref or low in r["id"]), None) \
+            or next((r for r in refs if r["name"].lower() == low), None) \
+            or next((r for r in refs if r["name"].lower().rsplit(".", 1)[0] == low.rsplit(".", 1)[0]), None) \
+            or next((r for r in refs if low in r["name"].lower()), None)
+    elif refs:
+        pick = refs[0]
+    if not pick:
+        names = ", ".join(r["name"] for r in refs[:10]) or "none"
+        raise FileNotFoundError(f"No file matching '{ref}'. Files in this chat: {names}. Ask the user to attach the file.")
+    fm = Files.get_file_by_id(pick["id"])
+    fm = await fm if asyncio.iscoroutine(fm) else fm
+    if not fm:
+        raise FileNotFoundError(f"File {pick['name']} is no longer available")
+    if fm.user_id != uid and (user or {}).get("role") != "admin":
+        raise PermissionError("That file belongs to another user.")
+    local = await asyncio.to_thread(Storage.get_file, fm.path)
+    data = await asyncio.to_thread(lambda: open(local, "rb").read())
+    return (fm.filename or pick["name"]), data, fm.id
+
+
 # ---------- Open WebUI files & notes ----------
 async def _store_file(user, name, data, mime):
     from open_webui.models.files import FileForm, Files
@@ -331,6 +405,9 @@ async def _store_file(user, name, data, mime):
                                                      meta={"name": name, "content_type": mime, "size": len(data), "source": "frontier_ui"}))
     if asyncio.iscoroutine(res):
         await res
+    _MADE[f"{user.get('id', '')}|{name.lower()}"] = fid
+    while len(_MADE) > 500:
+        _MADE.pop(next(iter(_MADE)))
     return fid, f"/api/v1/files/{fid}/content"
 
 

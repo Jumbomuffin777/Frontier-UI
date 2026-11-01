@@ -47,6 +47,7 @@ and draws real street routes** — then renders a polished, theme-aware card inl
 | 📈 **Live data** | Weather forecasts and stock / crypto / FX quotes with 1D·1M·1Y charts — keyless, fetched at answer time. |
 | 🔗 **Page previews** | Link cards with a real headless-Chromium screenshot, summary and reader view. |
 | 📝 **Real Office files** | Export any card to Word, PDF, Excel or PowerPoint built by the open-source [Craft apps](https://github.com/storytold) — photos and charts included — and open it on a streamed Craft desktop. |
+| 📂 **Read & edit your files** | Attach a Word, Excel, PowerPoint, PDF, image, RAW photo, SVG, DXF/DWG, STEP/STL, Figma/Sketch, IDML, audio or video file — Frontier reads it with the matching **ArtCraft** app (all 15 supported), shows a preview, and edits or converts it into a new downloadable copy. |
 | ✉️ **Gmail & Notes** | Every card has Copy, Email (Gmail compose), Export and Save to Notes; `email` blocks become one-click Gmail drafts. |
 | 📊 **Data blocks** | Stats tiles, bar & line charts, sortable tables, compare columns, steps, callouts, hero banner, quotes, status boards. |
 | 🔗 **Citations & follow-ups** | Favicon citation chips, a sources row, and suggested next questions that send the prompt in one click. |
@@ -83,8 +84,8 @@ Photon / Nominatim, OSRM / FOSSGIS, Open-Meteo and Yahoo Finance; the browser lo
 | Add-on | What you get | How |
 |---|---|---|
 | **Planet basemap** | Maps served from your own box — no tile API to break. ~140 GB; an HDD is fine. | [`server/local-web/setup.sh`](server/local-web/setup.sh) downloads the Protomaps planet, fonts and JS; nginx serves them with range requests. |
-| **Craft desktop + bridge** | `craft_file` makes real `.docx/.xlsx/.pptx/.pdf` with WordCraft · GridCraft · DeckCraft, opens files in any of the 13 Craft apps, and takes page screenshots. | [`server/craft-apps`](server/craft-apps) — `linuxserver/craft-apps` plus [`bridge.py`](server/craft-bridge/bridge.py). **LAN only.** |
-| **Craft web apps** | All 13 apps + the ArtCraft Launcher as static web apps for the `apps` block. | Same `setup.sh`, served under `/craft/`. |
+| **Craft desktop + bridge** | `craft_file` makes real `.docx/.xlsx/.pptx/.pdf` with WordCraft · GridCraft · DeckCraft, reads, edits and converts files with all 15 ArtCraft apps, and takes page screenshots. | [`server/craft-apps`](server/craft-apps) — `linuxserver/craft-apps` plus [`bridge.py`](server/craft-bridge/bridge.py). **LAN only.** |
+| **Craft web apps** | All 15 apps + the ArtCraft Launcher as static web apps for the `apps` block. | Same `setup.sh`, served under `/craft/`. |
 
 ### 🧰 Tool methods
 
@@ -94,6 +95,13 @@ Photon / Nominatim, OSRM / FOSSGIS, Open-Meteo and Yahoo Finance; the browser lo
 | `craft_file(format, card=…)` | Word / PDF / Excel / PowerPoint / CSV from a card (by id) or from Markdown, rows or slides. |
 | `craft_open(url, app)` | Open a photo, PDF, SVG, audio or video in a Craft app on the desktop. |
 | `save_note(card=…)` | Save a card or Markdown to Open WebUI Notes. |
+| `craft_read(file)` | Read an uploaded file with its ArtCraft app: text, formulas, slides, metadata and a preview. |
+| `craft_edit(file, …)` | Edit it headlessly — `replace_json` for documents, `cells_json` for spreadsheets, or any app command list — into a new copy. |
+| `craft_convert(file, format)` | Convert between formats (docx↔pdf, pptx→pdf, xlsx↔csv, psd→png, dxf→pdf, step→stl, wav→flac…). |
+| `craft_commands(app, search)` | Look up an app's engine commands for advanced edits. |
+
+**ArtCraft apps supported (all 15):** WordCraft · GridCraft · DeckCraft · PdfCraft · PhotoCraft · LightCraft · VectorCraft ·
+DesignCraft · FigCraft · FilmCraft · EffectCraft · SoundCraft · CADCraft · SolidCraft · Craft Anything.
 
 ## 🧩 How it works
 
