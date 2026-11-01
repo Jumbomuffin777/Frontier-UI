@@ -1,17 +1,24 @@
-
+﻿
 
 class Tools:
     """Frontier UI: rich, ChatGPT-style visual answers (photos, maps, places, itineraries, charts, live data) plus real
-    Word/Excel/PowerPoint/PDF files made, read and edited with all 15 ArtCraft apps, Gmail drafts and Open WebUI notes."""
+    Word/Excel/PowerPoint/PDF files made, read and edited with all 16 ArtCraft apps, Gmail drafts and Open WebUI notes."""
 
     class Valves(BaseModel):
-        searxng_url: str = Field(default="http://searxng:8080", description="SearXNG base URL used for image search (JSON format enabled).")
+        searxng_url: str = Field(default="", description="Optional. Your SearXNG base URL (JSON format enabled), e.g. http://searxng:8080, for broader photo coverage. Empty = keyless Wikipedia / Wikimedia Commons / Openverse only.")
         maplibre_cdn: str = Field(default="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1", description="MapLibre GL JS package base URL (fallback when tiles_url is not reachable).")
         tiles_url: str = Field(default="", description="Self-hosted basemap folder: planet.pmtiles, fonts/, sprites/v4/ and js/ (maplibre-gl, pmtiles, basemaps). Empty = OpenFreeMap.")
-        resolve_images: bool = Field(default=True, description="Resolve photo queries to real images (Wikipedia + SearXNG).")
+        resolve_images: bool = Field(default=True, description="Resolve photo queries to real images (keyless by default; SearXNG and API providers are optional).")
         resolve_maps: bool = Field(default=True, description="Geocode places and draw street routes (keyless OSM services).")
         live_data: bool = Field(default=True, description="Fetch live weather (Open-Meteo) and quotes (Yahoo Finance) for weather/stock blocks. Both are keyless.")
-        temperature_unit: str = Field(default="fahrenheit", description="fahrenheit or celsius")
+        units: Literal["auto", "metric", "imperial"] = Field(default="auto", description="Weather and distance units. auto = each viewer's browser locale (US/Liberia/Myanmar -> imperial, everyone else metric). Users can override in their own Frontier UI settings.")
+        map_app: Literal["google", "apple", "osm", "gpx"] = Field(default="google", description="Main 'Open in…' button on maps (the others stay in its menu): google, apple, osm (OpenStreetMap) or gpx (download for OsmAnd/Organic Maps/Garmin).")
+        image_provider: Literal["auto", "searxng", "wikipedia", "commons", "openverse", "brave", "google", "pexels", "unsplash"] = Field(default="auto", description="auto = SearXNG (if reachable) -> Wikipedia/Wikimedia Commons -> Openverse -> any keyed provider below. Pick one to try it first; the rest stay as fallbacks. Works with no keys and no SearXNG.")
+        brave_api_key: str = Field(default="", description="Optional. Brave Search API key (image search). Kept server-side.")
+        google_api_key: str = Field(default="", description="Optional. Google Programmable Search API key (needs google_cx). Kept server-side.")
+        google_cx: str = Field(default="", description="Optional. Google Programmable Search engine id with image search on.")
+        pexels_api_key: str = Field(default="", description="Optional. Pexels API key (stock photos; good for generic scenes). Kept server-side.")
+        unsplash_access_key: str = Field(default="", description="Optional. Unsplash access key (stock photos). Kept server-side.")
         embedding_url: str = Field(default="openwebui", description="'openwebui' = reuse Open WebUI's configured embedding engine (e.g. EmbeddingGemma) to rerank photos and link timeline rows to map pins; or an OpenAI-compatible base URL; empty = off.")
         embedding_model: str = Field(default="embeddinggemma-2", description="Embedding model name (only for a direct URL).")
         embedding_api_key: str = Field(default="", description="Bearer key (only for a direct URL).")
@@ -21,13 +28,30 @@ class Tools:
         craft_web_url: str = Field(default="", description="Base URL of the self-hosted Craft web apps (…/wordcraft/, …/launcher/).")
         page_screenshots: bool = Field(default=True, description="Use headless Chromium (via the Craft bridge) for link preview screenshots.")
 
+    class UserValves(BaseModel):
+        units: Literal["default", "auto", "metric", "imperial"] = Field(default="default", description="Your weather/distance units. default = the admin setting; auto = your browser locale.")
+        map_app: Literal["default", "google", "apple", "osm", "gpx"] = Field(default="default", description="Your main 'Open in…' map button.")
+
     def __init__(self):
         self.valves = self.Valves()
 
     # ---------------- helpers ----------------
-    def _ui(self, card=""):
+    def _prefs(self, user=None):
         v = self.valves
-        return {"tiles": v.tiles_url.rstrip("/"), "craft_web": v.craft_web_url.rstrip("/"), "craft_desktop": v.craft_desktop_url, "card": card,
+        uv = (user or {}).get("valves") if isinstance(user, dict) else None
+        def pick(name, default):
+            val = getattr(uv, name, None) if uv is not None and not isinstance(uv, dict) else (uv or {}).get(name)
+            return val if val and val != "default" else default
+        return {"units": pick("units", v.units), "map_app": pick("map_app", v.map_app)}
+
+    def _images_cfg(self):
+        v = self.valves
+        return {"provider": v.image_provider, "brave_key": v.brave_api_key.strip(), "google_key": v.google_api_key.strip(), "google_cx": v.google_cx.strip(),
+                "pexels_key": v.pexels_api_key.strip(), "unsplash_key": v.unsplash_access_key.strip()}
+
+    def _ui(self, card="", user=None):
+        v = self.valves
+        return {**self._prefs(user), "tiles": v.tiles_url.rstrip("/"), "craft_web": v.craft_web_url.rstrip("/"), "craft_desktop": v.craft_desktop_url, "card": card,
                 "apps": [{"id": k, "name": n, "desc": d, "emoji": e} for k, (n, d, e) in CRAFT_APPS.items()] if v.craft_web_url or v.craft_desktop_url else []}
 
     def _bridge(self):
@@ -44,7 +68,7 @@ class Tools:
         return HTMLResponse(content=_build_html(spec, theme, self.valves.maplibre_cdn, self.valves.tiles_url), headers={"Content-Disposition": "inline"})
 
     # ---------------- 1. rich card ----------------
-    async def render_frontier_ui(self, spec: str, __event_emitter__=None, __event_call__=None, __request__=None) -> tuple:
+    async def render_frontier_ui(self, spec: dict, __user__: dict = None, __event_emitter__=None, __event_call__=None, __request__=None) -> tuple:
         """
         Show a rich visual answer (ChatGPT-style generative UI) inside the chat. Use it whenever the answer has places, trips,
         itineraries, products, comparisons, numbers, prices, weather, stocks, links, timelines or anything that reads better with
@@ -58,8 +82,8 @@ class Tools:
         Blocks (use 3-7, in reading order; mix types, lead with text, put the most visual block early):
           {"type":"text","md":"markdown; **bold**, [link](url), cite sources inline as [1] [2]"}
           {"type":"images","items":[{"query":"Golden Gate Bridge from Baker Beach","caption":"Golden Gate"}]}  (3 specific queries)
-          {"type":"map","area":"Kyoto, Japan","mode":"walk|drive","places":[{"name":"Fushimi Inari Taisha","lat":34.9671,"lng":135.7727,"icon":"⛩️","time":"8:00","note":"Go early"}]}
-              (2-12 places in visiting order; street route drawn automatically; MULTI-DAY trips: use
+          {"type":"map","area":"Kyoto, Japan","mode":"walk|bike|drive|motorcycle","places":[{"name":"Fushimi Inari Taisha","lat":34.9671,"lng":135.7727,"icon":"⛩️","time":"8:00","note":"Go early"}]}
+              (2-12 places in visiting order; the street route is drawn automatically - no flag needed; "route":false = pins only; MULTI-DAY trips: use
                "days":[{"label":"Day 1","places":[...]},{"label":"Day 2","places":[...]}] instead of "places" -> day tabs, one coloured route per day)
           {"type":"places","area":"Kyoto","items":[{"name","subtitle","rating":4.6,"price":"$$","tags":["Ramen","Late night"],"description","url"?,"image":"photo query"?}]}
               (4+ items get sort/filter chips automatically - always give rating, price and 1-3 tags)
@@ -83,23 +107,21 @@ class Tools:
         Rules: concise, scannable copy; real facts only; cite with [n] only when sources are given; trips = images + map + timeline
         (+ budget when costs matter) with timeline "place" values matching map place names exactly.
 
-        :param spec: The JSON object described above (as a JSON string).
+        :param spec: The spec object described above. Pass it as a JSON object (not a string). Minimal example:
+            {"title":"Kyoto day","blocks":[{"type":"text","md":"…"},{"type":"map","places":[{"name":"Kiyomizu-dera","lat":34.995,"lng":135.785},{"name":"Gion","lat":35.004,"lng":135.775}]}],"followups":["Where to eat?"]}
         :return: An interactive rich embed rendered inline in the chat.
         """
         try:
-            data = _loads_lenient(spec)
+            data, notes = _normalize_spec(_loads_lenient(spec))
+        except SpecError as e:
+            return f"Frontier UI could not use the spec: {e}"
         except Exception as e:
-            return f"Frontier UI could not parse spec JSON ({e}). Fix the JSON and call render_frontier_ui again."
-        if isinstance(data, list):
-            data = {"blocks": data}
-        if not isinstance(data, dict):
-            return "Frontier UI spec must be a JSON object with a blocks array."
+            return f"Frontier UI could not read the spec ({type(e).__name__}: {e}). Pass ONE JSON object with a \"blocks\" array and call render_frontier_ui again."
         title = str(data.get("title") or "Response")[:120]
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"Building “{title}”…", "done": False}})
         v = self.valves
-        opts = {"live": v.live_data, "unit": "celsius" if v.temperature_unit.lower().startswith("c") else "fahrenheit", "bridge": self._bridge(),
-                "embed": None}
+        opts = {"live": v.live_data, "bridge": self._bridge(), "images": self._images_cfg(), "embed": None}
         if v.embedding_url == "openwebui":
             fn = getattr(getattr(getattr(__request__, "app", None), "state", None), "EMBEDDING_FUNCTION", None)
             if fn:
@@ -111,7 +133,7 @@ class Tools:
         except Exception:
             pass
         card = secrets.token_hex(4)
-        data["_ui"] = self._ui(card)
+        data["_ui"] = self._ui(card, __user__)
         _CARDS[card] = data
         while len(_CARDS) > 300:
             _CARDS.pop(next(iter(_CARDS)))
@@ -119,7 +141,11 @@ class Tools:
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"Showing “{title}”", "done": True}})
         kinds = [b.get("type") for b in data.get("blocks", []) if isinstance(b, dict)]
+        extra = [f"route: {b['route_status']}" for b in data.get("blocks", []) if isinstance(b, dict) and b.get("route_status")]
+        if notes:
+            extra.append("spec fixes applied: " + "; ".join(notes[:6]))
         return resp, (f"Frontier UI card “{title}” (card id: {card}) is rendered and visible to the user (blocks: {', '.join(map(str, kinds))}). "
+                      + ("Notes: " + " | ".join(extra) + ". " if extra else "") +
                       "Reply with one or two short sentences that add context; do not repeat the card or show JSON. "
                       f"If the user later asks to export or save this card, call craft_file or save_note with card=\"{card}\".")
 
@@ -204,7 +230,7 @@ class Tools:
         (PhotoCraft/LightCraft for photos, PdfCraft for PDFs, VectorCraft for SVG, FilmCraft for video, SoundCraft for audio).
 
         :param url: public http(s) URL of the file.
-        :param app: optional app id: photocraft, lightcraft, pdfcraft, vectorcraft, filmcraft, soundcraft, wordcraft, gridcraft, deckcraft, cadcraft, solidcraft, figcraft, designcraft, effectcraft, craft-anything.
+        :param app: optional app id: photocraft, lightcraft, pdfcraft, vectorcraft, filmcraft, soundcraft, wordcraft, gridcraft, deckcraft, cadcraft, solidcraft, figcraft, designcraft, effectcraft, texturecraft, craft-anything.
         :return: A card confirming where it opened.
         """
         try:
@@ -256,7 +282,7 @@ class Tools:
         """
         Open a file the user uploaded (or one made earlier in this chat) with the matching ArtCraft app and read it:
         Word/ODT/RTF (WordCraft), Excel/CSV with formulas (GridCraft), PowerPoint (DeckCraft), PDF (PdfCraft), images and PSD
-        (PhotoCraft), RAW photos (LightCraft), SVG/AI/EPS (VectorCraft), DXF/DWG (CADCraft), STEP/STL/3MF (SolidCraft),
+        (PhotoCraft), RAW photos (LightCraft), SVG/AI/EPS (VectorCraft), DXF/DWG (CADCraft), STEP/STL/3MF (SolidCraft), GLB/glTF/FBX/USD/OBJ 3D models and .tcraft (TextureCraft),
         Figma/Sketch/Penpot (FigCraft), IDML (DesignCraft), audio (SoundCraft), video (FilmCraft), EffectCraft projects, and any
         other file or app bundle (Craft Anything's first look). Use it before answering questions about an attached file or
         before editing it. Shows a preview card and returns the file's text, structure and metadata to you.
@@ -403,7 +429,7 @@ class Tools:
         """
         Look up the engine commands (ids and parameters) an ArtCraft app accepts, for craft_edit.
         Apps: wordcraft, gridcraft, deckcraft, pdfcraft, photocraft, lightcraft, vectorcraft, designcraft, figcraft, filmcraft,
-        effectcraft, soundcraft, cadcraft, solidcraft. Always pass a search (e.g. "replace", "cell", "slide", "resize", "export").
+        effectcraft, soundcraft, cadcraft, solidcraft, texturecraft. Always pass a search (e.g. "replace", "cell", "slide", "resize", "export").
 
         :param app: the app id.
         :param search: words that must appear in the command (id, label or parameters).

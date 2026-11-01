@@ -43,7 +43,21 @@ function vstyle(dark){var c=dark?PAL.dark:PAL.light;var name=['coalesce',['get',
  {id:'nb',type:'symbol',source:'p','source-layer':'place',minzoom:10,maxzoom:15,filter:['in','class','suburb','quarter','neighbourhood'],layout:{'text-field':name,'text-font':['Noto Sans Regular'],'text-size':10,'text-letter-spacing':.08,'text-transform':'uppercase','text-max-width':8},paint:{'text-color':c.minor,'text-halo-color':c.halo,'text-halo-width':1.2}},
  {id:'city',type:'symbol',source:'p','source-layer':'place',minzoom:5,maxzoom:13,filter:['in','class','city','town'],layout:{'text-field':name,'text-font':['Noto Sans Regular'],'text-size':14,'text-max-width':8},paint:{'text-color':c.label,'text-halo-color':c.halo,'text-halo-width':1.5}}]};}
 function rstyle(dark){return {version:8,sources:{r:{type:'raster',tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/'+(dark?'Canvas/World_Dark_Gray_Base':'World_Street_Map')+'/MapServer/tile/{z}/{y}/{x}'],tileSize:256,maxzoom:19,attribution:'Tiles © Esri · © OpenStreetMap'}},layers:[{id:'r',type:'raster',source:'r'}]};}
-function fmtKm(km){return km<10?km.toFixed(1)+' km':Math.round(km)+' km';}
+function fmtKm(km){if(I.units()==='imperial'){var mi=km/1.609344;return mi<10?mi.toFixed(1)+' mi':Math.round(mi)+' mi';}return km<10?km.toFixed(1)+' km':Math.round(km)+' km';}
+/* map apps: Google Maps keeps every stop; Apple Maps and OpenStreetMap take start -> end; GPX carries all stops plus
+   the street route for OsmAnd, Organic Maps, Garmin, motorcycle navigators and Google My Maps */
+function ll(p){return (+p.lat).toFixed(6)+','+(+p.lng).toFixed(6);}
+function appleUrl(list,mode){if(list.length===1)return 'https://maps.apple.com/?ll='+ll(list[0])+'&q='+encodeURIComponent(list[0].name||'Pin');
+ return 'https://maps.apple.com/?saddr='+ll(list[0])+'&daddr='+ll(list[list.length-1])+'&dirflg='+(mode==='walk'?'w':'d');}
+function osmUrl(list,mode){var a=list[0];if(list.length===1)return 'https://www.openstreetmap.org/?mlat='+(+a.lat).toFixed(6)+'&mlon='+(+a.lng).toFixed(6)+'#map=16/'+(+a.lat).toFixed(5)+'/'+(+a.lng).toFixed(5);
+ var eng={walk:'fossgis_osrm_foot',bike:'fossgis_osrm_bike'}[mode]||'fossgis_osrm_car';return 'https://www.openstreetmap.org/directions?engine='+eng+'&route='+encodeURIComponent(ll(a)+';'+ll(list[list.length-1]));}
+function gpx(name,list,line){var e=function(s){return String(s==null?'':s).replace(/[<>&"]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c];});};
+ var x=['<?xml version="1.0" encoding="UTF-8"?>','<gpx version="1.1" creator="Frontier UI" xmlns="http://www.topografix.com/GPX/1/1">','<metadata><name>'+e(name)+'</name></metadata>'];
+ list.forEach(function(p){x.push('<wpt lat="'+(+p.lat).toFixed(6)+'" lon="'+(+p.lng).toFixed(6)+'"><name>'+e(p.name)+'</name>'+(p.note||p.time?'<desc>'+e([p.time,p.note].filter(Boolean).join(' - '))+'</desc>':'')+'</wpt>');});
+ x.push('<rte><name>'+e(name)+'</name>');list.forEach(function(p){x.push('<rtept lat="'+(+p.lat).toFixed(6)+'" lon="'+(+p.lng).toFixed(6)+'"><name>'+e(p.name)+'</name></rtept>');});x.push('</rte>');
+ if(line&&line.length>1){x.push('<trk><name>'+e(name)+' (street route)</name><trkseg>');line.forEach(function(c){x.push('<trkpt lat="'+(+c[0]).toFixed(6)+'" lon="'+(+c[1]).toFixed(6)+'"/>');});x.push('</trkseg></trk>');}
+ x.push('</gpx>');return x.join('\n');}
+function saveFile(name,text,mime){var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:mime}));a.download=name;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},2000);}
 function fmtMin(m){m=Math.round(m);return m<60?m+' min':Math.floor(m/60)+' h '+(m%60?m%60+' min':'');}
 function gmapsUrl(list,mode){list=list.slice(0,10);if(!list.length)return '';var ll=function(p){return (+p.lat).toFixed(6)+','+(+p.lng).toFixed(6);};
  if(list.length===1)return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(list[0].name?list[0].name+' '+ll(list[0]):ll(list[0]));
@@ -63,7 +77,10 @@ function mapBlock(b){
  var ctlL=h('div','mctl l'),ctlR=h('div','mctl r');box.appendChild(ctlL);box.appendChild(ctlR);
  var sel=null;if(groups.length>1){sel=document.createElement('select');sel.className='mbtn';var o=document.createElement('option');o.value='';o.textContent='All groups';sel.appendChild(o);groups.forEach(function(g){var oo=document.createElement('option');oo.value=g;oo.textContent=g;sel.appendChild(oo);});ctlL.appendChild(sel);}
  var bFit=h('button','mbtn ic',[icon('nav')]);bFit.title='Fit all places';ctlL.appendChild(bFit);
- var bG=h('button','mbtn',[icon('ext'),txt('span','','Google Maps')]);bG.title='Open this route in Google Maps';ctlR.appendChild(bG);
+ var APPS={google:'Google Maps',apple:'Apple Maps',osm:'OpenStreetMap',gpx:'GPX file'};var primary=APPS[UI.map_app]?UI.map_app:'google';
+ var gw=h('div','mgrp');var bG=h('button','mbtn',[icon('ext'),txt('span','',APPS[primary])]);bG.title='Open this route in '+APPS[primary];var bM=h('button','mbtn ic',[icon('chev')]);bM.title='Other map apps';gw.appendChild(bG);gw.appendChild(bM);ctlR.appendChild(gw);
+ var mm=h('div','mmenu');[['google','Google Maps','all stops'],['apple','Apple Maps','start → end'],['osm','OpenStreetMap','start → end'],['gpx','Download GPX','OsmAnd, Organic Maps, Garmin…']].forEach(function(o){var it=h('button','',[txt('span','',o[1]),txt('small','',o[2])]);it.onclick=function(e){e.stopPropagation();mm.classList.remove('on');openApp(o[0]);};mm.appendChild(it);});
+ gw.appendChild(mm);bM.onclick=function(e){e.stopPropagation();mm.classList.toggle('on');};document.addEventListener('click',function(){mm.classList.remove('on');});
  var bExp=h('button','mbtn',[icon('exp'),txt('span','','Expand')]);ctlR.appendChild(bExp);
  var pop=h('div','mpop');box.appendChild(pop);
  var stat=txt('div','mstat','');box.appendChild(stat);
@@ -73,7 +90,11 @@ function mapBlock(b){
   if(!rs.length){stat.style.display='none';return;}var km=0,mn=0;rs.forEach(function(r){km+=r.km;mn+=r.min;});var walk=rs[0].mode==='walk';
   stat.textContent=(walk?'🚶 ':'🚗 ')+fmtKm(km)+' · '+fmtMin(mn)+(walk?' walking':' by car')+' · '+visible().length+' stops'+(curDay?' · '+curDay:'');stat.style.display='block';}
  setStat();
- bG.onclick=function(){var r=routeFor(curDay)||b.route_geo||{};I.openLink(gmapsUrl(visible(),r.mode||b.mode));};
+ function openApp(kind){var r=routeFor(curDay)||b.route_geo||{};var md=r.mode||b.mode;var list=visible();if(!list.length)return;
+  if(kind==='gpx'){saveFile(((I.S.title||'route')+(curDay?' '+curDay:'')).replace(/[^\w -]+/g,'').trim()+'.gpx',gpx((I.S.title||'Route')+(curDay?' - '+curDay:''),list,r.line),'application/gpx+xml');return;}
+  I.openLink(kind==='apple'?appleUrl(list,md):kind==='osm'?osmUrl(list,md):gmapsUrl(list,md));}
+ bG.onclick=function(e){e.stopPropagation();openApp(primary);};
+ if(b.route_status){wrap.appendChild(txt('div','rstat','⚠ '+b.route_status));}
  var reg={places:places,select:function(){}};MAPS.push(reg);
  loadLib().then(function(lib){return localBase(lib).then(function(ok){return [lib,ok];});}).then(function(r){var lib=r[0],useLocal=r[1];
   var usedRaster=false;function styleFor(dark){return useLocal?lstyle(dark):vstyle(dark);}
@@ -122,7 +143,27 @@ function mapBlock(b){
   var big=false;bExp.onclick=function(){big=!big;box.style.height=(big?Math.max(560,Math.round(base*1.7)):base)+'px';bExp.innerHTML='';bExp.appendChild(icon(big?'col':'exp'));bExp.appendChild(txt('span','',big?'Collapse':'Expand'));setTimeout(function(){map.resize();fit(visible(),true);},380);};
   document.addEventListener('iui-theme',function(){usedRaster=false;map.setStyle(styleFor(I.isDark()));});
   new ResizeObserver(function(){map.resize();}).observe(box);
- }).catch(function(){box.style.height='auto';box.style.padding='12px';var l=h('div','maplist');places.forEach(function(p,i){l.appendChild(txt('span','tag',(p.icon||(i+1)+'.')+' '+p.name));});box.appendChild(l);});
+ }).catch(function(err){
+   /* No WebGL (GPU blocklisted, hardened Firefox/LibreWolf profiles, some VMs) or the map library was blocked:
+      draw a static sketch of the stops and street routes instead of a broken strip. Map-app links and GPX still work. */
+   [].slice.call(box.querySelectorAll('.maplibregl-canvas-container,.maplibregl-control-container,canvas')).forEach(function(e){e.remove();});
+   box.classList.add('nogl');box.style.height='auto';bExp.style.display='none';bFit.style.display='none';
+   var lines=[];if(days.length){days.forEach(function(d){var r=DR[d];if(r&&r.line)lines.push([r.line,dayColor(d)]);});}else if(b.route_geo&&b.route_geo.line)lines.push([b.route_geo.line,'#4f8ef7']);
+   var pts=places.filter(function(p){return p.lat!=null&&p.lng!=null;});var all=pts.map(function(p){return [p.lat,p.lng];});lines.forEach(function(l){all=all.concat(l[0]);});
+   if(all.length){var la=all.map(function(x){return x[0];}),lo=all.map(function(x){return x[1];});var y0=Math.min.apply(null,la),y1=Math.max.apply(null,la),x0=Math.min.apply(null,lo),x1=Math.max.apply(null,lo);
+    var k=Math.cos((y0+y1)/2*Math.PI/180),W=640,H=300,P=34,sw=Math.max((x1-x0)*k,1e-4),sh=Math.max(y1-y0,1e-4),sc=Math.min((W-2*P)/sw,(H-2*P)/sh);
+    var X=function(x){return W/2+((x-(x0+x1)/2)*k)*sc;},Y=function(y){return H/2-(y-(y0+y1)/2)*sc;};
+    var NS='http://www.w3.org/2000/svg',sv=document.createElementNS(NS,'svg');sv.setAttribute('viewBox','0 0 '+W+' '+H);sv.setAttribute('class','msketch');sv.setAttribute('role','img');sv.setAttribute('aria-label','Route sketch');
+    var mk=function(t,a){var e=document.createElementNS(NS,t);for(var q in a)e.setAttribute(q,a[q]);sv.appendChild(e);return e;};
+    lines.forEach(function(l){mk('polyline',{points:l[0].map(function(c){return X(c[1]).toFixed(1)+','+Y(c[0]).toFixed(1);}).join(' '),fill:'none',stroke:l[1]||'#4f8ef7','stroke-width':4,'stroke-linejoin':'round','stroke-linecap':'round',opacity:.9});});
+    if(!lines.length&&pts.length>1)mk('polyline',{points:pts.map(function(p){return X(p.lng).toFixed(1)+','+Y(p.lat).toFixed(1);}).join(' '),fill:'none',stroke:'#8a8f98','stroke-width':2,'stroke-dasharray':'6 6'});
+    var cnt={};pts.forEach(function(p,i){var n=p.day?(cnt[p.day]=(cnt[p.day]||0)+1):i+1;var cx=X(p.lng),cy=Y(p.lat);mk('circle',{cx:cx,cy:cy,r:11,fill:dayColor(p.day)||'#4f8ef7',stroke:'#fff','stroke-width':2});
+     var t=mk('text',{x:cx,y:cy+4,'text-anchor':'middle','font-size':11,'font-weight':700,fill:'#fff'});t.textContent=String(n);
+     var lb=mk('text',{x:cx+15,y:cy+4,'font-size':12,'class':'mslab'});lb.textContent=(p.name||'').slice(0,34);});
+    box.appendChild(sv);}
+   box.appendChild(txt('div','faint mnote','Interactive map unavailable in this browser (WebGL is off or the map library was blocked) - showing a route sketch. Use the map-app button for turn-by-turn.'));
+   var l=h('div','maplist');places.forEach(function(p,i){l.appendChild(txt('span','tag',(p.icon||(i+1)+'.')+' '+p.name));});box.appendChild(l);
+   try{console.warn('Frontier UI map fallback:',err&&err.message||err);}catch(e){}});
  return wrap;}
 '''
 _HTML += r'''/* ---------- other blocks ---------- */

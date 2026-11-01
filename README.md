@@ -38,8 +38,8 @@ and draws real street routes** — then renders a polished, theme-aware card inl
 
 | | |
 |---|---|
-| 🖼️ **Photo galleries** | Real images from Wikipedia + your SearXNG, three-up or scrolling, captions and lightbox. Broken or icon-sized hits fall back to the next candidate automatically. |
-| 🗺️ **Live street maps** | MapLibre GL + OpenFreeMap vector tiles, numbered / emoji pins with decluttered labels, **real walking routes** in a city (FOSSGIS) or driving routes for longer trips (OSRM), distance & time chip, group filter, fit & expand. |
+| 🖼️ **Photo galleries** | Real images with **no keys and no extra services**: Wikipedia, Wikimedia Commons and Openverse (with attribution). Add SearXNG or an API key for broader coverage. Broken or icon-sized hits fall back to the next candidate; a missing photo shows a clean placeholder. |
+| 🗺️ **Live street maps** | MapLibre GL + OpenFreeMap vector tiles, numbered / emoji pins with decluttered labels, **real street routes** drawn by default — walking in a city, bike, or driving / motorcycle for road trips — distance & time in km or mi, group filter, fit & expand. Open the route in Google Maps, Apple Maps or OpenStreetMap, or download a **GPX** for OsmAnd, Organic Maps or Garmin. No WebGL? You get a static route sketch. |
 | 🧭 **Linked itinerary** | Click a timeline stop and the map flies to its pin; click a pin and the stop lights up. |
 | 🍝 **Place cards** | Photo, rating, price, neighborhood, tags and link — with sort and filter chips once there are four or more. |
 | 📅 **Multi-day trips** | Day tabs with one coloured street route per day, **Open in Google Maps**, and **Add to calendar** (Google or `.ics`). |
@@ -47,12 +47,12 @@ and draws real street routes** — then renders a polished, theme-aware card inl
 | 📈 **Live data** | Weather forecasts and stock / crypto / FX quotes with 1D·1M·1Y charts — keyless, fetched at answer time. |
 | 🔗 **Page previews** | Link cards with a real headless-Chromium screenshot, summary and reader view. |
 | 📝 **Real Office files** | Export any card to Word, PDF, Excel or PowerPoint built by the open-source [Craft apps](https://github.com/storytold) — photos and charts included — and open it on a streamed Craft desktop. |
-| 📂 **Read & edit your files** | Attach a Word, Excel, PowerPoint, PDF, image, RAW photo, SVG, DXF/DWG, STEP/STL, Figma/Sketch, IDML, audio or video file — Frontier reads it with the matching **ArtCraft** app (all 15 supported), shows a preview, and edits or converts it into a new downloadable copy. |
+| 📂 **Read & edit your files** | Attach a Word, Excel, PowerPoint, PDF, image, RAW photo, SVG, DXF/DWG, STEP/STL, Figma/Sketch, IDML, audio or video file — Frontier reads it with the matching **ArtCraft** app (all 16 supported, including TextureCraft for GLB/glTF/FBX/USD/OBJ models), shows a preview, and edits or converts it into a new downloadable copy. |
 | ✉️ **Gmail & Notes** | Every card has Copy, Email (Gmail compose), Export and Save to Notes; `email` blocks become one-click Gmail drafts. |
 | 📊 **Data blocks** | Stats tiles, bar & line charts, sortable tables, compare columns, steps, callouts, hero banner, quotes, status boards. |
 | 🔗 **Citations & follow-ups** | Favicon citation chips, a sources row, and suggested next questions that send the prompt in one click. |
 | 🌗 **Feels native** | Follows Open WebUI's light / dark theme live, auto-sizes, and runs in a nonce-locked CSP sandbox. |
-| 🛟 **Forgiving** | Repairs fenced, truncated or trailing-comma JSON; caches lookups, limits concurrency and backs off on rate limits. |
+| 🛟 **Forgiving** | Takes the spec as a JSON object (or a string), repairs fenced, truncated, double-encoded or trailing-comma JSON, maps common block-name slips, and tells the model exactly what to fix when it can't. Caches lookups, limits concurrency and backs off on rate limits. |
 
 ## 🚀 Install
 
@@ -66,26 +66,49 @@ and draws real street routes** — then renders a polished, theme-aware card inl
 
 | Valve | Default | What it does |
 |---|---|---|
-| `searxng_url` | `http://searxng:8080` | SearXNG with the JSON format enabled, used for image search. Optional — Wikipedia still works without it. |
+| `units` | `auto` | `auto` = each viewer's browser locale (US → °F/mph/mi, everyone else °C/km/h/km), or force `metric` / `imperial`. |
+| `map_app` | `google` | Main “Open in…” button on maps: `google`, `apple`, `osm` or `gpx`. The others stay in its menu. |
+| `image_provider` | `auto` | Photo source to try first. `auto` = SearXNG (if set) → Wikipedia + Commons → Openverse → any keyed provider. |
+| `searxng_url` | *(empty)* | Optional. Your SearXNG (JSON format enabled) for broader photo coverage. An unreachable SearXNG is skipped for 5 minutes. |
+| `brave_api_key` · `google_api_key` + `google_cx` · `pexels_api_key` · `unsplash_access_key` | *(empty)* | Optional photo APIs. Keys stay on the server — never in the card HTML, the browser or tool output. |
 | `maplibre_cdn` | `https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1` | MapLibre GL JS package. |
 | `resolve_images` / `resolve_maps` | `true` | Turn server-side photo or map resolution off. |
 | `tiles_url` | *(empty)* | Self-hosted basemap folder (`planet.pmtiles`, `fonts/`, `sprites/`, `js/`) — see below. Empty = OpenFreeMap. |
-| `live_data` · `temperature_unit` | `true` · `fahrenheit` | Live weather / quotes, and °F or °C. |
+| `live_data` | `true` | Live weather / quotes. |
 | `embedding_url` | `openwebui` | Reuse Open WebUI's embedding engine to rerank photos and match itinerary rows to pins; or an OpenAI-compatible URL (+ `embedding_model`, `embedding_api_key`); empty = off. |
 | `craft_bridge_url` · `craft_bridge_token` | *(empty)* | The Craft bridge (real Office files, page screenshots). |
 | `craft_desktop_url` · `craft_web_url` | *(empty)* | Links shown on file cards and in the `apps` launcher. |
 | `page_screenshots` | `true` | Screenshots for link previews (needs the bridge). |
 
-**Requirements:** Open WebUI ≥ 0.6 (tested on 0.12.5). Everything is keyless: the server needs outbound HTTPS to Wikipedia,
-Photon / Nominatim, OSRM / FOSSGIS, Open-Meteo and Yahoo Finance; the browser loads map tiles and photos. The add-ons below are optional.
+**Per-user settings** (chat › Tools › Frontier UI ⚙︎): `units` and `map_app`, so a European user can pick metric even if the
+admin default is imperial.
+
+**Photo sources.** Wikipedia and Wikimedia Commons are great for landmarks, cities and topics; Openverse adds CC-licensed photos.
+Small businesses (a specific café) often have no free photo — the card then shows a tidy placeholder. For better coverage there,
+add SearXNG (free, self-hosted), a Brave Search key, a Google Programmable Search key + engine id, or Pexels / Unsplash for generic
+scenes. Bing's image API was retired in 2025, so it isn't offered. Attribution (author · licence · source) is kept on every photo.
+
+**Opening map / Gmail / Calendar links.** Open WebUI renders tool cards in a sandboxed iframe without
+`allow-popups-to-escape-sandbox`, so a new tab opened from the card inherits the sandbox. Google Maps, Gmail, Calendar, Apple
+Maps and OpenStreetMap all send `Cross-Origin-Opener-Policy`, so Chromium shows **ERR_BLOCKED_BY_RESPONSE** (the same URL works
+in a fresh tab). Frontier therefore:
+1. opens links through the Open WebUI window when **Settings › Interface › iframe Sandbox Allow Same Origin** is on — a normal tab;
+2. opens directly on phones/tablets (the OS hands the link to the Maps / Gmail app) and for Open WebUI's own downloads;
+3. otherwise copies the link and shows a small sheet with **Copy link** / **Try opening anyway**.
+
+Turning on *Allow Same Origin* is an admin decision: it relaxes the sandbox for every embed, not just Frontier UI.
+
+**Requirements:** Open WebUI ≥ 0.6 (tested on 0.12.5). Everything is keyless: the server needs outbound HTTPS to Wikipedia /
+Wikimedia Commons, Openverse, Photon / Nominatim, OSRM / FOSSGIS, Open-Meteo and Yahoo Finance; the browser loads map tiles and photos.
+Interactive maps need WebGL; without it (blocklisted GPU, hardened Firefox profiles, some VMs) maps fall back to a static sketch. The add-ons below are optional.
 
 ### 🏠 Optional self-hosted add-ons ([`server/`](server))
 
 | Add-on | What you get | How |
 |---|---|---|
 | **Planet basemap** | Maps served from your own box — no tile API to break. ~140 GB; an HDD is fine. | [`server/local-web/setup.sh`](server/local-web/setup.sh) downloads the Protomaps planet, fonts and JS; nginx serves them with range requests. |
-| **Craft desktop + bridge** | `craft_file` makes real `.docx/.xlsx/.pptx/.pdf` with WordCraft · GridCraft · DeckCraft, reads, edits and converts files with all 15 ArtCraft apps, and takes page screenshots. | [`server/craft-apps`](server/craft-apps) — `linuxserver/craft-apps` plus [`bridge.py`](server/craft-bridge/bridge.py). **LAN only.** |
-| **Craft web apps** | All 15 apps + the ArtCraft Launcher as static web apps for the `apps` block. | Same `setup.sh`, served under `/craft/`. |
+| **Craft desktop + bridge** | `craft_file` makes real `.docx/.xlsx/.pptx/.pdf` with WordCraft · GridCraft · DeckCraft, reads, edits and converts files with all 16 ArtCraft apps, and takes page screenshots. | [`server/craft-apps`](server/craft-apps) — `linuxserver/craft-apps` plus [`bridge.py`](server/craft-bridge/bridge.py). **LAN only.** |
+| **Craft web apps** | All 16 apps + the ArtCraft Launcher as static web apps for the `apps` block. | Same `setup.sh`, served under `/craft/`. |
 
 ### 🧰 Tool methods
 
@@ -100,17 +123,17 @@ Photon / Nominatim, OSRM / FOSSGIS, Open-Meteo and Yahoo Finance; the browser lo
 | `craft_convert(file, format)` | Convert between formats (docx↔pdf, pptx→pdf, xlsx↔csv, psd→png, dxf→pdf, step→stl, wav→flac…). |
 | `craft_commands(app, search)` | Look up an app's engine commands for advanced edits. |
 
-**ArtCraft apps supported (all 15):** WordCraft · GridCraft · DeckCraft · PdfCraft · PhotoCraft · LightCraft · VectorCraft ·
-DesignCraft · FigCraft · FilmCraft · EffectCraft · SoundCraft · CADCraft · SolidCraft · Craft Anything.
+**ArtCraft apps supported (all 16):** WordCraft · GridCraft · DeckCraft · PdfCraft · PhotoCraft · LightCraft · VectorCraft ·
+DesignCraft · FigCraft · FilmCraft · EffectCraft · SoundCraft · CADCraft · SolidCraft · TextureCraft · Craft Anything.
 
 ## 🧩 How it works
 
 ```
 model ──► render_frontier_ui(spec JSON)
             │
-            ├─ photos   ─► Wikipedia + SearXNG   (ranked, deduplicated, cached)
+            ├─ photos   ─► Wikipedia · Commons · Openverse  (+ SearXNG / API keys if set; ranked, cached)
             ├─ places   ─► Wikipedia coords / Photon / Nominatim  (snaps the model's estimate)
-            ├─ routes   ─► FOSSGIS foot · OSRM car
+            ├─ routes   ─► FOSSGIS foot/bike/car · OSRM car (with fallbacks)
             ▼
          sandboxed HTML card  ─►  MapLibre map · galleries · cards · charts · follow-ups
 ```

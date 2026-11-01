@@ -1,8 +1,8 @@
 """
 title: Frontier UI
 author: Zability (Claude Opus 5.5); inspired by ChatGPT Intelligent UI and thesysdev/open-intelligent-ui (MIT)
-version: 1.2.1
-description: ChatGPT-style generative UI: photo galleries, street maps with multi-day routes (self-hosted planet tiles), filterable place cards, itineraries, budgets, calculators, live weather and quotes, link previews, Gmail drafts, calendar export, real Word/Excel/PowerPoint/PDF files, and reading + editing your uploaded files with all 15 ArtCraft apps.
+version: 1.3.0
+description: ChatGPT-style generative UI: photo galleries, street maps with multi-day routes (self-hosted planet tiles), filterable place cards, itineraries, budgets, calculators, live weather and quotes, link previews, Gmail drafts, calendar export, real Word/Excel/PowerPoint/PDF files, and reading + editing your uploaded files with all 16 ArtCraft apps.
 required_open_webui_version: 0.6.0
 """
 import asyncio
@@ -13,6 +13,8 @@ import secrets
 from urllib.parse import urlparse
 
 import aiohttp
+from typing import Literal
+
 from pydantic import BaseModel, Field
 from starlette.responses import HTMLResponse
 
@@ -71,7 +73,8 @@ async def _wiki_images(session, q):
 
 
 async def _searx_images(session, base, q):
-    data = await _get_json(session, base.rstrip("/") + "/search", {"q": q, "categories": "images", "format": "json", "safesearch": "1"})
+    # short timeout: an unreachable SearXNG must leave time for the keyless fallbacks inside the 8 s photo budget
+    data = await _get_json(session, base.rstrip("/") + "/search", {"q": q, "categories": "images", "format": "json", "safesearch": "1"}, timeout=3)
     out = []
     for r in (data.get("results") or [])[:12]:
         src = r.get("img_src") or ""
@@ -81,26 +84,143 @@ async def _searx_images(session, base, q):
     return out
 
 
-async def _images_for(session, searx, q, wiki=True):
+async def _commons_images(session, q):
+    """Wikimedia Commons file search (keyless, hotlink-friendly thumbnails, licence + author for attribution)."""
+    data = await _get_json(session, "https://commons.wikimedia.org/w/api.php", {
+        "action": "query", "format": "json", "formatversion": "2", "generator": "search", "gsrsearch": f"{q} filetype:bitmap",
+        "gsrnamespace": "6", "gsrlimit": "8", "prop": "imageinfo", "iiprop": "url|extmetadata", "iiurlwidth": "960",
+        "iiextmetadatafilter": "Artist|LicenseShortName"})
+    wanted, out = _words(q), []
+    for p in sorted((data.get("query") or {}).get("pages") or [], key=lambda p: p.get("index", 0)):
+        ii = (p.get("imageinfo") or [{}])[0]
+        src = ii.get("thumburl") or ii.get("url") or ""
+        title = re.sub(r"^File:|\.\w{3,4}$", "", p.get("title", ""))
+        overlap = len(_words(title) & wanted) / max(1, len(wanted))
+        if src.startswith("https://") and not _SKIP_IMG.search(src) and (not wanted or overlap >= 0.5):
+            md = ii.get("extmetadata") or {}
+            artist = re.sub(r"<[^>]+>", "", (md.get("Artist") or {}).get("value", "")).strip()[:80]
+            lic = (md.get("LicenseShortName") or {}).get("value", "")
+            out.append({"src": src, "page": ii.get("descriptionurl", ""), "title": title,
+                        "credit": " · ".join(x for x in (artist, lic, "Wikimedia Commons") if x)})
+    return out
+
+
+async def _openverse_images(session, q):
+    """Openverse (WordPress.org) CC-licensed images; anonymous access is rate limited, so it is a late fallback."""
+    data = await _get_json(session, "https://api.openverse.org/v1/images/", {"q": q, "page_size": "8", "mature": "false"})
+    out, wanted = [], _words(q)
+    for r in (data.get("results") or [])[:8]:
+        src = r.get("thumbnail") or r.get("url") or ""
+        overlap = len(_words(f"{r.get('title', '')} {' '.join(t.get('name', '') for t in r.get('tags') or [] if isinstance(t, dict))}") & wanted) / max(1, len(wanted))
+        if src.startswith("https://") and not _SKIP_IMG.search(src) and (len(wanted) < 2 or overlap >= 0.34):
+            out.append({"src": src, "page": r.get("foreign_landing_url", ""), "title": r.get("title", ""),
+                        "credit": " · ".join(x for x in (r.get("creator"), (r.get("license") or "").upper() and f"CC {(r.get('license') or '').upper()}", "Openverse") if x)})
+    return out
+
+
+async def _keyed_json(session, url, params, headers, timeout=6):
+    """GET for providers that need a key. The key travels only in server-side headers/params, never to the browser;
+    errors are reported without the URL so a key in the query string can't leak into logs or tool output."""
+    try:
+        async with session.get(url, params=params, headers={**UA, **headers}, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+            if r.status != 200:
+                raise RuntimeError(f"HTTP {r.status}")
+            return await r.json(content_type=None)
+    except asyncio.TimeoutError:
+        raise RuntimeError("timeout")
+    except aiohttp.ClientError as e:
+        raise RuntimeError(type(e).__name__)
+
+
+async def _brave_images(session, q, key):
+    data = await _keyed_json(session, "https://api.search.brave.com/res/v1/images/search", {"q": q, "count": "10", "safesearch": "strict"},
+                             {"X-Subscription-Token": key, "Accept": "application/json"})
+    return [{"src": (r.get("thumbnail") or {}).get("src") or (r.get("properties") or {}).get("url", ""), "page": r.get("url", ""),
+             "title": r.get("title", ""), "credit": r.get("source", "")} for r in (data.get("results") or [])[:10]
+            if ((r.get("thumbnail") or {}).get("src") or "").startswith("https://")]
+
+
+async def _google_images(session, q, key, cx):
+    data = await _keyed_json(session, "https://www.googleapis.com/customsearch/v1",
+                             {"key": key, "cx": cx, "q": q, "searchType": "image", "num": "10", "safe": "active"}, {})
+    return [{"src": it.get("link", ""), "page": (it.get("image") or {}).get("contextLink", ""), "title": it.get("title", ""),
+             "credit": it.get("displayLink", "")} for it in (data.get("items") or []) if str(it.get("link", "")).startswith("https://")]
+
+
+async def _pexels_images(session, q, key):
+    data = await _keyed_json(session, "https://api.pexels.com/v1/search", {"query": q, "per_page": "8"}, {"Authorization": key})
+    return [{"src": (p.get("src") or {}).get("large", ""), "page": p.get("url", ""), "title": p.get("alt", "") or q,
+             "credit": f"Photo by {p.get('photographer', '')} on Pexels"} for p in (data.get("photos") or [])]
+
+
+async def _unsplash_images(session, q, key):
+    data = await _keyed_json(session, "https://api.unsplash.com/search/photos", {"query": q, "per_page": "8", "content_filter": "high"},
+                             {"Authorization": f"Client-ID {key}", "Accept-Version": "v1"})
+    return [{"src": (p.get("urls") or {}).get("regular", ""), "page": ((p.get("links") or {}).get("html", "") + "?utm_source=frontier_ui&utm_medium=referral"),
+             "title": p.get("alt_description") or q, "credit": f"Photo by {(p.get('user') or {}).get('name', '')} on Unsplash"}
+            for p in (data.get("results") or [])]
+
+
+_DOWN: dict = {}  # provider -> time it failed; skipped for a few minutes so a missing SearXNG never slows every card
+
+
+def _provider_up(name):
+    return time.time() - _DOWN.get(name, 0) > 300
+
+
+async def _images_for(session, searx, q, wiki=True, cfg=None):
+    """Photo candidates from a fallback chain that works with no services and no keys:
+    SearXNG (if reachable) + optional keyed providers, then Wikipedia + Wikimedia Commons, then Openverse.
+    `cfg` = {"provider": "auto"|name, "brave_key", "google_key", "google_cx", "pexels_key", "unsplash_key"}."""
+    cfg = cfg or {}
     q = re.sub(r"\s+", " ", str(q or "")).strip()[:160]
     if len(q) < 2:
         return []
-    if q in _IMG_CACHE:
-        return _IMG_CACHE[q]
-    jobs = ([_wiki_images(session, q)] if wiki else []) + [_searx_images(session, searx, q)]
-    res = await asyncio.gather(*jobs, return_exceptions=True)
+    want = cfg.get("provider") or "auto"
+    ck = (q, want, bool(searx))
+    if ck in _IMG_CACHE:
+        return _IMG_CACHE[ck]
+    p = {}
+    if searx:
+        p["searxng"] = lambda: _searx_images(session, searx, q)
+    if cfg.get("brave_key"):
+        p["brave"] = lambda: _brave_images(session, q, cfg["brave_key"])
+    if cfg.get("google_key") and cfg.get("google_cx"):
+        p["google"] = lambda: _google_images(session, q, cfg["google_key"], cfg["google_cx"])
+    p["wikipedia"] = lambda: _wiki_images(session, q)
+    p["commons"] = lambda: _commons_images(session, q)
+    p["openverse"] = lambda: _openverse_images(session, q)
+    if cfg.get("pexels_key"):
+        p["pexels"] = lambda: _pexels_images(session, q, cfg["pexels_key"])
+    if cfg.get("unsplash_key"):
+        p["unsplash"] = lambda: _unsplash_images(session, q, cfg["unsplash_key"])
+    if want != "auto" and want in p:
+        tiers = [[want], [n for n in ("wikipedia", "commons") if n != want], ["openverse"]]
+    else:
+        web = [n for n in ("searxng", "brave", "google") if n in p]
+        # landmarks/topics (galleries, heroes) get Wikipedia first; named businesses lean on web search
+        tiers = [web + (["wikipedia", "commons"] if wiki or not web else []), ["wikipedia", "commons"] if web and not wiki else [],
+                 ["openverse"] + [n for n in ("pexels", "unsplash") if n in p]]
     seen, out = set(), []
-    for group in res:
-        if isinstance(group, Exception):
+    for tier in tiers:
+        tier = [n for n in dict.fromkeys(tier) if n in p and _provider_up(n) and n not in seen]
+        if not tier or len(out) >= 3:
             continue
-        for it in group:
-            if it["src"] not in seen:
-                seen.add(it["src"])
-                out.append(it)
+        res = await asyncio.gather(*(p[n]() for n in tier), return_exceptions=True)
+        for n, group in zip(tier, res):
+            seen.add(n)
+            if isinstance(group, Exception):
+                if n in ("searxng", "brave", "google", "pexels", "unsplash"):
+                    _DOWN[n] = time.time()
+                continue
+            for it in group:
+                if it.get("src") and it["src"] not in {o["src"] for o in out}:
+                    it.setdefault("provider", n)
+                    out.append(it)
     # photos first: transparent PNG cut-outs look empty as tiles, keep them as late fallbacks
-    out = sorted(out, key=lambda it: 1 if re.search(r"\.png(\?|$)", it["src"], re.I) else 0)[:6]
+    out = sorted(out, key=lambda it: 1 if re.search(r"\.png(\?|$)", it["src"], re.I) else 0)[:8]
     if out:
-        _cache_put(_IMG_CACHE, q, out)
+        _cache_put(_IMG_CACHE, ck, out)
     return out
 
 
@@ -172,67 +292,206 @@ def _km(a, b):
     return 2 * 6371.0 * math.asin(math.sqrt(h))
 
 
+ROUTE_MODES = {"walk": "walk", "walking": "walk", "foot": "walk", "hike": "walk", "hiking": "walk",
+               "bike": "bike", "bicycle": "bike", "cycling": "bike", "cycle": "bike",
+               "drive": "drive", "driving": "drive", "car": "drive", "motorcycle": "drive", "motorbike": "drive",
+               "moto": "drive", "road trip": "drive", "roadtrip": "drive", "auto": "auto", "": "auto"}
+
+
+def _route_mode(m):
+    return ROUTE_MODES.get(str(m or "auto").strip().lower(), "auto")
+
+
+class RouteError(RuntimeError):
+    pass
+
+
 async def _route(session, pts, mode="auto"):
-    """Street geometry in visiting order. City-scale stops use the FOSSGIS foot router (walkable paths, no
-    detours over bridges), longer trips the OSRM car router."""
+    """Street geometry in visiting order from keyless public OSRM servers. City-scale stops default to walking
+    (FOSSGIS foot router), longer trips to driving (OSRM demo, FOSSGIS car as backup); bike uses FOSSGIS bike.
+    Raises RouteError with a reason the card can show."""
     spread = max(_km(pts[0], q) for q in pts)
+    mode = _route_mode(mode)
     if mode == "auto":
         mode = "walk" if spread < 12 else "drive"
     key = (mode, tuple((round(a, 5), round(b, 5)) for a, b in pts))
     if key in _ROUTE_CACHE:
         return _ROUTE_CACHE[key]
     coords = ";".join(f"{lng:.6f},{lat:.6f}" for lat, lng in pts)
-    urls = ([f"https://routing.openstreetmap.de/routed-foot/route/v1/driving/{coords}"] if mode == "walk" else []) + \
-           [f"https://router.project-osrm.org/route/v1/driving/{coords}"]
-    data, used = None, mode
-    for i, u in enumerate(urls):
+    fossgis = "https://routing.openstreetmap.de/routed-{}/route/v1/driving/" + coords
+    urls = {"walk": [(fossgis.format("foot"), "walk"), (fossgis.format("car"), "drive")],
+            "bike": [(fossgis.format("bike"), "bike"), (fossgis.format("car"), "drive")],
+            "drive": [(f"https://router.project-osrm.org/route/v1/driving/{coords}", "drive"), (fossgis.format("car"), "drive")]}[mode]
+    last = "routing service unavailable"
+    for u, used in urls:
         try:
-            data = await _get_json(session, u, {"overview": "full", "geometries": "geojson", "steps": "false"}, timeout=6)
-            if data.get("code") == "Ok" and data.get("routes"):
-                used = mode if (mode == "drive" or i == 0) else "drive"
-                break
-        except Exception:
-            data = None
-    if not data or data.get("code") != "Ok" or not data.get("routes"):
-        raise RuntimeError("no route")
-    r0 = data["routes"][0]
-    out = {"line": [[c[1], c[0]] for c in r0["geometry"]["coordinates"]], "km": r0.get("distance", 0) / 1000.0,
-           "min": r0.get("duration", 0) / 60.0, "mode": used}
-    _cache_put(_ROUTE_CACHE, key, out, 200)
-    return out
+            data = await _get_json(session, u, {"overview": "full", "geometries": "geojson", "steps": "false"}, timeout=8)
+        except Exception as e:
+            last = f"routing service unavailable ({str(e).split()[-1][:20]})"
+            continue
+        if data.get("code") == "Ok" and data.get("routes"):
+            r0 = data["routes"][0]
+            out = {"line": [[c[1], c[0]] for c in r0["geometry"]["coordinates"]], "km": r0.get("distance", 0) / 1000.0,
+                   "min": r0.get("duration", 0) / 60.0, "mode": used}
+            _cache_put(_ROUTE_CACHE, key, out, 200)
+            return out
+        last = {"NoRoute": "no road connects these stops", "NoSegment": "a stop is too far from any road",
+                "TooBig": "too many stops for the router"}.get(data.get("code"), f"router said {data.get('code')}")
+        if data.get("code") in ("NoRoute", "NoSegment"):
+            break
+    raise RouteError(last)
 
 
-def _loads_lenient(spec):
+class SpecError(ValueError):
+    """A spec the tool could not read; the message tells the model exactly what to fix."""
+
+
+def _close_truncated(s):
+    """Close strings/brackets left open by output that was cut off mid-way."""
+    stack, instr, esc = [], False, False
+    for ch in s:
+        if instr:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                instr = False
+            continue
+        if ch == '"':
+            instr = True
+        elif ch in "[{":
+            stack.append("]" if ch == "[" else "}")
+        elif ch in "]}" and stack:
+            stack.pop()
+    s = s.rstrip()
+    if instr:
+        s += '"'
+    s = re.sub(r",\s*$", "", s)
+    s = re.sub(r':\s*$', ': null', s)
+    return s + "".join(reversed(stack))
+
+
+def _loads_lenient(spec, _depth=0):
+    """Parse a spec that small models often emit slightly wrong. Bounded repairs only (each is a known, common failure);
+    anything else raises SpecError with the position and a snippet so the model can fix its JSON."""
     if isinstance(spec, (dict, list)):
         return spec
-    s = str(spec or "").strip()
-    s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s)
-    try:
-        return json.loads(s)
-    except Exception:
-        pass
-    s2 = re.sub(r",\s*([}\]])", r"\1", s)          # trailing commas
-    s2 = re.sub(r"(?<!\\)'", '"', s2) if s2.count('"') < 2 else s2
-    try:
-        return json.loads(s2)
-    except Exception:
-        # truncated output: close open brackets
-        stack, out, instr, esc = [], [], False, False
-        for ch in s2:
-            out.append(ch)
-            if instr:
-                esc = (ch == "\\" and not esc)
-                if ch == '"' and not esc:
-                    instr = False
+    s = str(spec or "").strip().lstrip("")
+    if not s:
+        raise SpecError("spec is empty. Pass one JSON object like {\"title\": \"…\", \"blocks\": [{\"type\": \"text\", \"md\": \"…\"}]}.")
+    s = re.sub(r"^```[a-zA-Z]*\s*|\s*```\s*$", "", s)  # code fences
+    attempts = [s]
+    a, b = s.find("{"), s.rfind("}")
+    if a > 0 or (b != -1 and b < len(s) - 1):  # prose around the object
+        attempts.append(s[a:b + 1] if a != -1 and b > a else s[a:] if a != -1 else s)
+    first_err = None
+    for t in list(attempts):
+        t2 = (t.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'"))
+        t3 = re.sub(r",\s*([}\]])", r"\1", t2)  # trailing commas
+        for cand in dict.fromkeys([t, t2, t3, _close_truncated(t3)]):
+            try:
+                v = json.loads(cand, strict=False)  # strict=False: raw newlines/tabs inside strings
+            except json.JSONDecodeError as e:
+                first_err = first_err or (e, cand)
                 continue
-            if ch == '"':
-                instr = True
-            elif ch in "[{":
-                stack.append("]" if ch == "[" else "}")
-            elif ch in "]}" and stack:
-                stack.pop()
-        tail = ('"' if instr else "") + "".join(reversed(stack))
-        return json.loads(re.sub(r",\s*([}\]])", r"\1", "".join(out) + tail))
+            if isinstance(v, str) and _depth < 2:  # double-encoded: a JSON string that contains the JSON
+                return _loads_lenient(v, _depth + 1)
+            return v
+        try:  # Python-style literals: single quotes, True/False/None
+            import ast
+            v = ast.literal_eval(t3)
+            if isinstance(v, (dict, list)):
+                return v
+        except Exception:
+            pass
+    e, cand = first_err if first_err else (None, s)
+    if e is None:
+        raise SpecError("spec is not JSON.")
+    lo = max(0, e.pos - 60)
+    raise SpecError(f"spec JSON is invalid at character {e.pos} ({e.msg}): …{cand[lo:e.pos + 40]}… "
+                    "Check quotes and commas there, keep it to ONE object, and call the tool again.")
+
+
+BLOCK_ALIASES = {"gallery": "images", "photos": "images", "image": "images", "itinerary": "timeline", "schedule": "timeline",
+                 "cards": "places", "place": "places", "restaurants": "places", "markdown": "text", "paragraph": "text",
+                 "note": "callout", "tip": "callout", "warning": "callout", "kpi": "stats", "metrics": "stats",
+                 "graph": "chart", "comparison": "compare", "howto": "steps", "route": "map", "maps": "map",
+                 "forecast": "weather", "stocks": "stock", "quote_card": "quote", "link": "links", "previews": "links"}
+KNOWN_BLOCKS = {"text", "images", "map", "places", "timeline", "table", "stats", "chart", "callout", "compare", "steps", "hero",
+                "quote", "budget", "calculator", "weather", "stock", "links", "email", "status", "apps"}
+
+
+def _unescape_text(v):
+    """Literal "\\n" sequences (double-escaped by the model) become real line breaks in prose."""
+    if isinstance(v, str) and "\\n" in v and "\n" not in v:
+        return v.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "  ")
+    return v
+
+
+def _normalize_spec(data):
+    """Accept the shapes models actually send, fix harmless slips, and list what was changed or dropped."""
+    notes = []
+    if isinstance(data, dict) and isinstance(data.get("spec"), (dict, str)) and "blocks" not in data:
+        data = _loads_lenient(data["spec"])  # {"spec": {...}} wrapper
+    if isinstance(data, list):
+        data = {"blocks": data}
+    if not isinstance(data, dict):
+        raise SpecError("spec must be a JSON object with a \"blocks\" array.")
+    blocks = data.get("blocks")
+    if blocks is None:
+        for k in ("components", "sections", "content", "items"):
+            if isinstance(data.get(k), list):
+                blocks = data.pop(k)
+                notes.append(f"used '{k}' as blocks")
+                break
+    if isinstance(blocks, dict):
+        blocks = [blocks]
+    if not isinstance(blocks, list) or not blocks:
+        if data.get("md") or data.get("text"):
+            blocks = [{"type": "text", "md": data.get("md") or data.get("text")}]
+        else:
+            raise SpecError("spec has no \"blocks\" array. Example: {\"title\": \"Kyoto\", \"blocks\": [{\"type\": \"text\", \"md\": \"…\"}, "
+                            "{\"type\": \"map\", \"places\": [{\"name\": \"Kiyomizu-dera\", \"lat\": 34.99, \"lng\": 135.78}]}]}")
+    out = []
+    for i, b in enumerate(blocks):
+        if isinstance(b, str):
+            b = {"type": "text", "md": b}
+        if not isinstance(b, dict):
+            notes.append(f"block {i} dropped (not an object)")
+            continue
+        t = str(b.get("type") or b.get("kind") or "").strip().lower()
+        if t in BLOCK_ALIASES:
+            b["type"] = BLOCK_ALIASES[t]
+        elif t not in KNOWN_BLOCKS:
+            if any(k in b for k in ("md", "text", "content")):
+                b = {"type": "text", "title": b.get("title"), "md": b.get("md") or b.get("text") or b.get("content")}
+                notes.append(f"block {i} type '{t or '?'}' shown as text")
+            else:
+                notes.append(f"block {i} dropped (unknown type '{t or '?'}')")
+                continue
+        else:
+            b["type"] = t
+        for k in ("md", "text", "detail", "description", "body", "subtitle", "note"):
+            if k in b:
+                b[k] = _unescape_text(b[k])
+        L = lambda x: x if isinstance(x, list) else []
+        nested = L(b.get("items")) + L(b.get("places"))
+        for d in L(b.get("days")):
+            if isinstance(d, dict):
+                nested += L(d.get("places"))
+        for it in nested:
+            if isinstance(it, dict):
+                for k in ("md", "text", "detail", "description", "note"):
+                    if k in it:
+                        it[k] = _unescape_text(it[k])
+        out.append(b)
+    if not out:
+        raise SpecError("none of the blocks could be used: " + "; ".join(notes))
+    data["blocks"] = out
+    for k in ("title", "subtitle"):
+        data[k] = _unescape_text(data.get(k)) if data.get(k) else data.get(k)
+    return data, notes
 
 
 def _is_url(s):
@@ -301,7 +560,7 @@ async def _resolve(spec, searx, do_images=True, do_maps=True, opts=None):
 
         async def run_img(obj, key, q, wiki):
             try:
-                obj[key] = await asyncio.wait_for(_images_for(session, searx, q, wiki), 6)
+                obj[key] = await asyncio.wait_for(_images_for(session, searx, q, wiki, opts.get("images")), 8)
             except Exception:
                 obj[key] = []
 
@@ -342,33 +601,53 @@ async def _resolve(spec, searx, do_images=True, do_maps=True, opts=None):
                     p["lat"] = p["lng"] = None
 
             await asyncio.gather(*(one(p) for p in places), return_exceptions=True)
-            mode = str(b.get("mode") or "auto").lower()
-            mode = mode if mode in ("walk", "drive") else "auto"
+            mode = _route_mode(b.get("mode") or b.get("travel") or b.get("transport"))
+            b["mode"] = mode
             days = []
             for p in places:
                 if p.get("day") and p["day"] not in days:
                     days.append(p["day"])
+            dropped = [str(p.get("name") or "?") for p in places if p.get("lat") is None]
+            want_route = b.get("route", True) not in (False, "false", "no", 0)  # on by default; "route": false turns it off
+            statuses = []
 
-            async def route_for(ps):
+            async def route_for(ps, label=""):
                 pts = [(p["lat"], p["lng"]) for p in ps if p.get("lat") is not None]
-                if b.get("route", True if days else False) and 2 <= len(pts) <= 25 and max(_km(pts[0], q) for q in pts) < 400:
-                    try:
-                        return await _route(session, pts, mode)
-                    except Exception:
-                        return None
-                return None
+                if not want_route:
+                    return None
+                if len(pts) < 2:
+                    statuses.append(f"{label}no route: fewer than 2 stops with valid coordinates" if len(ps) >= 2 else "")
+                    return None
+                if max(_km(pts[0], q) for q in pts) > 2500:
+                    statuses.append(f"{label}no route: stops are more than 2,500 km apart")
+                    return None
+                note = ""
+                if len(pts) > 25:
+                    pts, note = pts[:25], " (first 25 stops)"
+                try:
+                    r = await _route(session, pts, mode)
+                    r["note"] = note.strip()
+                    return r
+                except Exception as e:
+                    statuses.append(f"{label}street route unavailable: {e}; showing straight lines")
+                    return None
 
             if len(days) > 1:  # one street route per day; the "All" view shows every day's route in its own colour
-                res = await asyncio.gather(*(route_for([p for p in places if p.get("day") == d]) for d in days), return_exceptions=True)
+                res = await asyncio.gather(*(route_for([p for p in places if p.get("day") == d], f"{d}: ") for d in days), return_exceptions=True)
                 b["day_routes"] = {d: (r if isinstance(r, dict) else None) for d, r in zip(days, res)}
                 b["days_order"] = days
             else:
                 b["route_geo"] = await route_for(places)
+            b["route"] = want_route
+            if dropped:
+                statuses.append(f"{len(dropped)} stop(s) not placed (no valid coordinates): {', '.join(dropped[:5])}")
+            b["route_status"] = "; ".join(s for s in statuses if s)
 
         async def run_live(kind, b):
             try:
                 if kind == "weather":
-                    b["weather"] = await asyncio.wait_for(_weather(session, b, opts.get("unit", "fahrenheit")), 7)
+                    # always fetched in metric; the card converts to °F/mph when the viewer's units are imperial
+                    b["weather"] = await asyncio.wait_for(_weather(session, b, "celsius"), 7)
                 elif kind == "stock":
                     syms = b.get("symbols") or ([b["symbol"]] if b.get("symbol") else [])
                     qs = await asyncio.gather(*(asyncio.wait_for(_quote(session, s), 7) for s in syms[:6]), return_exceptions=True)
@@ -450,6 +729,7 @@ CRAFT_APPS = {
     "figcraft": ("FigCraft", "UI design & prototyping", "🧩"), "filmcraft": ("FilmCraft", "Video editing", "🎬"),
     "effectcraft": ("EffectCraft", "Motion graphics & VFX", "✨"), "soundcraft": ("SoundCraft", "Audio recording & mixing", "🎚️"),
     "cadcraft": ("CADCraft", "CAD drafting", "📐"), "solidcraft": ("SolidCraft", "Parametric 3D CAD", "🧊"),
+    "texturecraft": ("TextureCraft", "3D texture painting & PBR materials", "🎨"),
     "craft-anything": ("Craft Anything", "See how any software works", "🔍"),
 }
 CRAFT_EXT = {  # file extension -> app that reads / edits it (mirrors the bridge)
@@ -463,6 +743,7 @@ CRAFT_EXT = {  # file extension -> app that reads / edits it (mirrors the bridge
     **{e: "filmcraft" for e in "mp4 mov webm mkv avi mxf".split()}, "idml": "designcraft",
     **{e: "figcraft" for e in "fig figcraft sketch penpot".split()},
     **{e: "lightcraft" for e in "dng heic cr2 cr3 nef arw raf orf rw2 pef".split()}, "ecproj": "effectcraft",
+    **{e: "texturecraft" for e in "tcraft glb gltf fbx dae usd usda usdc usdz abc obj ply".split()},
 }
 FORMAT_KIND = {"docx": "doc", "pdf": "doc", "odt": "doc", "rtf": "doc", "html": "doc", "md": "doc", "txt": "doc",
                "xlsx": "sheet", "csv": "sheet", "pptx": "deck", "gif": "deck"}
@@ -1212,7 +1493,37 @@ var app=document.getElementById('app');
 var origin='*';try{if(document.referrer)origin=new URL(document.referrer).origin;}catch(e){}
 function post(m){try{parent.postMessage(m,origin);}catch(e){}}
 function sendPrompt(t){post({type:'input:prompt:submit',text:String(t)});}
-function openLink(u){try{var p=new URL(String(u||''),location.href);if(!/^https?:$/.test(p.protocol))return;var w=null;try{w=parent.window.open(p.href,'_blank','noopener,noreferrer');}catch(e){w=window.open(p.href,'_blank','noopener,noreferrer');}if(w)w.opener=null;}catch(e){}}
+/* External links. Open WebUI renders tool cards in <iframe sandbox="allow-scripts allow-popups …"> WITHOUT
+   allow-popups-to-escape-sandbox, so a tab opened from the card inherits the sandbox (opaque origin). Chromium then
+   refuses to load any site that sends Cross-Origin-Opener-Policy (Google Maps/Gmail/Calendar, Apple Maps,
+   OpenStreetMap…) -> ERR_BLOCKED_BY_RESPONSE, while the same URL works in a fresh tab. So:
+   1) same-origin embed (Settings > Interface > iframe Sandbox Allow Same Origin): open from the parent window -> normal tab;
+   2) Open WebUI's own files (no COOP) and touch devices (the OS hands map/mail links to apps): open directly;
+   3) otherwise: copy the link and show a small sheet instead of opening a dead tab. */
+function baseUrl(){return (window.IUI&&IUI.UI&&IUI.UI.base)||(origin!=='*'?origin:'');}
+function absUrl(u){var B=baseUrl(),s=String(u||'');if(s.charAt(0)==='/'&&s.charAt(1)!=='/'&&B)s=(B.slice(-1)==='/'?B.slice(0,-1):B)+s;return new URL(s,B?B+'/':location.href);}
+function parentOpen(href){try{var pw=parent.window;if(pw===window)return false;void pw.location.href;pw.open(href,'_blank','noopener,noreferrer');return true;}catch(e){return false;}}
+function touch(){try{return matchMedia('(pointer:coarse)').matches&&!matchMedia('(pointer:fine)').matches;}catch(e){return false;}}
+function copyPlain(t){var ta=document.createElement('textarea');ta.value=t;ta.setAttribute('readonly','');ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();var ok=false;try{ok=document.execCommand('copy');}catch(e){}ta.remove();
+ if(!ok&&navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(function(){},function(){});ok=true;}return ok;}
+function linkSheet(href){var old=document.querySelector('.lsheet');if(old)old.remove();var copied=copyPlain(href);
+ var s=h('div','lsheet');s.setAttribute('role','dialog');var c=h('div','lsc');s.appendChild(c);
+ c.appendChild(txt('div','lst',copied?'Link copied - paste it into a new tab':'Copy this link into a new tab'));
+ var inp=document.createElement('input');inp.className='lsi';inp.readOnly=true;inp.value=href;inp.onclick=function(){inp.select();};c.appendChild(inp);
+ c.appendChild(txt('div','lsh','Open WebUI keeps tool cards sandboxed, and sites like Google, Apple Maps and OpenStreetMap refuse to open from a sandboxed tab. An admin can allow direct opening in Settings › Interface › "iframe Sandbox Allow Same Origin" (this relaxes the sandbox for every embed).'));
+ var row=h('div','lsb');var cp=txt('button','btn pri','Copy link');cp.onclick=function(){cp.textContent=copyPlain(href)?'Copied ✓':'Press Ctrl+C';inp.select();};
+ var tr=txt('button','btn','Try opening anyway');tr.onclick=function(){window.open(href,'_blank','noopener,noreferrer');};var cl=txt('button','btn','Close');cl.onclick=function(){s.remove();};
+ row.appendChild(cp);row.appendChild(tr);row.appendChild(cl);c.appendChild(row);
+ /* the card iframe is as tall as its content, so a fixed bottom sheet could land off-screen: anchor it under the clicked control */
+ var a=document.activeElement,r=(a&&a!==document.body&&a.getBoundingClientRect)?a.getBoundingClientRect():null;document.body.appendChild(s);
+ var top=(r?r.bottom:Math.min(innerHeight,600)/2)+scrollY+6,sh=s.offsetHeight,max=Math.max(document.body.scrollHeight,document.documentElement.scrollHeight);
+ if(top+sh>max&&r)top=Math.max(0,r.top+scrollY-sh-6);s.style.top=top+'px';
+ setTimeout(function(){document.addEventListener('click',function off(e){if(!s.isConnected||!s.contains(e.target)){s.remove();document.removeEventListener('click',off,true);}},true);inp.select();},30);}
+function openLink(u){try{var p=absUrl(u);if(!/^https?:$/.test(p.protocol))return;
+ if(parentOpen(p.href))return;
+ var B=baseUrl(),own=false;try{own=!!B&&p.origin===new URL(B).origin;}catch(e){}
+ if(own||touch()){window.open(p.href,'_blank','noopener,noreferrer');return;}
+ linkSheet(p.href);}catch(e){}}
 var lastH=0,raf=0;
 function reportHeight(){var h=Math.ceil(Math.max(document.body.scrollHeight,document.documentElement.scrollHeight));if(Math.abs(h-lastH)<2)return;lastH=h;post({type:'iframe:height',height:h});}
 function schedule(){cancelAnimationFrame(raf);raf=requestAnimationFrame(reportHeight);}
@@ -1264,16 +1575,17 @@ function photo(item,cls,opts){
  if(item&&typeof item.image==='string'&&/^https:/.test(item.image))c=[{src:item.image}].concat(c);
  if(item&&typeof item.src==='string'&&/^https:/.test(item.src))c=[{src:item.src}].concat(c);
  var cap=(item&&(item.caption||item.name||item.title||item.query))||'';
- if(!c.length){box.classList.add('miss');box.textContent=opts.noText?'':cap;return box;}
+ function miss(){box.classList.add('miss');if(opts.noText){var m=txt('span','mi',(item&&item.icon)||String(cap||'?').trim().charAt(0).toUpperCase());box.textContent='';box.appendChild(m);}else{box.textContent=cap;}}
+ if(!c.length){miss();return box;}
  var sh=h('div','shimmer');box.appendChild(sh);var img=document.createElement('img');img.alt=cap;img.loading='lazy';img.referrerPolicy='no-referrer';var i=0;
- function next(){if(i>=c.length){box.classList.add('miss');img.remove();sh.remove();box.textContent=opts.noText?'':cap;return;}img.src=c[i++].src;}
- img.onload=function(){if(img.naturalWidth<140&&i<c.length){next();return;}img.classList.add('ok');sh.remove();box.dataset.page=(c[i-1]&&c[i-1].page)||'';};
+ function next(){if(i>=c.length){img.remove();sh.remove();miss();return;}img.src=c[i++].src;}
+ img.onload=function(){if(img.naturalWidth<140&&i<c.length){next();return;}img.classList.add('ok');sh.remove();var cc=c[i-1]||{};box.dataset.page=cc.page||'';box.dataset.credit=cc.credit||'';if(cc.credit)img.title=cc.credit;};
  img.onerror=next;next();box.appendChild(img);
  if(opts.bookmark){var b=h('div','bm');b.innerHTML=SVG.bm;box.appendChild(b);}
  if(opts.caption&&cap){box.appendChild(txt('div','cap',cap));}
- if(opts.zoom){box.addEventListener('click',function(){if(img.classList.contains('ok'))lightbox(img.src,cap,box.dataset.page);});}
+ if(opts.zoom){box.addEventListener('click',function(){if(img.classList.contains('ok'))lightbox(img.src,cap,box.dataset.page,box.dataset.credit);});}
  return box;}
-function lightbox(src,cap,page){var lb=h('div','lb');var im=document.createElement('img');im.src=src;lb.appendChild(im);var c=h('div','lbc');c.appendChild(document.createTextNode(cap||''));if(page){c.appendChild(document.createTextNode('  ·  '));var a=txt('a','',domain(page));a.href='#';a.setAttribute('data-url',page);c.appendChild(a);}lb.appendChild(c);lb.addEventListener('click',function(e){if(!e.target.closest('a'))lb.remove();});document.body.appendChild(lb);}
+function lightbox(src,cap,page,credit){var lb=h('div','lb');var im=document.createElement('img');im.src=src;im.referrerPolicy='no-referrer';lb.appendChild(im);var c=h('div','lbc');c.appendChild(document.createTextNode((cap||'')+(credit?'  ·  '+credit:'')));if(page){c.appendChild(document.createTextNode('  ·  '));var a=txt('a','',domain(page));a.href='#';a.setAttribute('data-url',page);c.appendChild(a);}lb.appendChild(c);lb.addEventListener('click',function(e){if(!e.target.closest('a'))lb.remove();});document.body.appendChild(lb);}
 function scroller(inner){var w=h('div','wrap',[inner]);var L=h('button','arrow l');L.innerHTML=SVG.l;var R=h('button','arrow r');R.innerHTML=SVG.r;w.appendChild(L);w.appendChild(R);
  function upd(){L.classList.toggle('on',inner.scrollLeft>4);R.classList.toggle('on',inner.scrollLeft+inner.clientWidth<inner.scrollWidth-4);}
  L.onclick=function(){inner.scrollBy({left:-inner.clientWidth*.8,behavior:'smooth'});};R.onclick=function(){inner.scrollBy({left:inner.clientWidth*.8,behavior:'smooth'});};
@@ -1297,8 +1609,7 @@ window.IUI={S:S,app:app,SRC:SRC,h:h,txt:txt,arr:arr,md:md,photo:photo,scroller:s
 '''
 _HTML = _HTML.replace(' onerror="this.remove()"', '').replace(
     ".ti .thumb img{width:100%;height:100%;object-fit:cover}",
-    ".ti .thumb img{width:100%;height:100%;object-fit:cover}.ti .thumb .ph{aspect-ratio:auto;height:100%;border-radius:0}").replace(
-    "var p=new URL(String(u||''),location.href);", "var B=(window.IUI&&IUI.UI&&IUI.UI.base)||(origin!=='*'?origin:'');var s=String(u||'');if(s.charAt(0)==='/'&&s.charAt(1)!=='/'&&B)s=(B.slice(-1)==='/'?B.slice(0,-1):B)+s;var p=new URL(s,B?B+'/':location.href);")
+    ".ti .thumb img{width:100%;height:100%;object-fit:cover}.ti .thumb .ph{aspect-ratio:auto;height:100%;border-radius:0}")
 
 
 _HTML += r'''<style>
@@ -1376,12 +1687,32 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .menu button:hover{background:var(--surface)}.menu small{color:var(--faint);margin-left:auto}
 .toast{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);background:var(--fg);color:var(--surface2);padding:6px 12px;border-radius:999px;font-size:12.5px;z-index:9;opacity:0;transition:opacity .2s}
 .toast.on{opacity:1}
+.mgrp{position:relative;display:inline-flex;gap:2px}.mgrp .mbtn:first-child{border-radius:999px 4px 4px 999px}.mgrp .mbtn.ic{border-radius:4px 999px 999px 4px;padding:0 8px}
+.mmenu{position:absolute;z-index:6;top:36px;right:0;background:var(--surface2);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:5px;min-width:230px;display:none}
+.mmenu.on{display:block}.mmenu button{display:flex;width:100%;align-items:center;gap:8px;border:0;background:transparent;color:var(--fg);padding:7px 9px;border-radius:8px;font:500 13px inherit;font-family:inherit;cursor:pointer;text-align:left}
+.mmenu button:hover{background:var(--surface)}.mmenu small{color:var(--faint);margin-left:auto;font-size:11px}
+.rstat{margin-top:6px;font-size:12.5px;color:var(--muted)}
+.mapbox.nogl{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px;overflow:visible}.mapbox.nogl .mctl,.mapbox.nogl .mstat{position:static}.mapbox.nogl .mctl.r{margin-left:auto}
+.mapbox.nogl .msketch,.mapbox.nogl .mnote,.mapbox.nogl .maplist{flex:1 1 100%}.msketch{width:100%;height:auto;max-height:340px}.msketch .mslab{fill:var(--fg);paint-order:stroke;stroke:var(--surface);stroke-width:3px}.mnote{font-size:12px}
+.ph.miss{display:grid;place-items:center;cursor:default}.ph.miss .mi{font-size:28px;font-weight:600;color:var(--faint);opacity:.8}
+.lsheet{position:absolute;left:8px;right:8px;z-index:20;display:flex;justify-content:center}
+.lsc{width:100%;max-width:520px;background:var(--surface2);color:var(--fg);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:14px;display:flex;flex-direction:column;gap:9px}
+.lst{font-weight:600;font-size:14px}.lsi{width:100%;box-sizing:border-box;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:9px;padding:7px 9px;font:12.5px ui-monospace,monospace}
+.lsh{font-size:12px;color:var(--muted);line-height:1.45}.lsb{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 </style>
 <script nonce="__NONCE__">
 (function(){
 "use strict";
 var I=window.IUI;var h=I.h,txt=I.txt,arr=I.arr,md=I.md,photo=I.photo,label=I.label,icon=I.icon,UI=I.UI,X=I.X;
 var COLORS=['#4f8ef7','#f59e0b','#10b981','#ef4444','#8b5cf6','#06b6d4','#ec4899','#84cc16'];
+/* units: block override > user/admin valve > browser locale (US, LR, MM use imperial) */
+I.units=function(b){var u=String((b&&b.units)||UI.units||'auto').toLowerCase();if(u==='metric'||u==='imperial')return u;
+ var l='';try{l=(navigator.languages&&navigator.languages[0])||navigator.language||'';}catch(e){}var m=/[-_]([A-Za-z]{2})\b/.exec(l);var r=m?m[1].toUpperCase():'';return (r==='US'||r==='LR'||r==='MM')?'imperial':'metric';};
+function wxUnits(W,b){if(!W||W._conv)return W;var imp=I.units(b)==='imperial';var isF=/F/.test(W.unit||'');if(imp===isF){W._conv=1;return W;}
+ var T=imp?function(c){return c==null?c:c*9/5+32;}:function(f){return f==null?f:(f-32)*5/9;};var S=imp?function(k){return k==null?k:k/1.609344;}:function(m){return m==null?m:m*1.609344;};
+ if(W.now){W.now.t=T(W.now.t);W.now.feels=T(W.now.feels);W.now.wind=S(W.now.wind);}arr(W.hourly).forEach(function(x){x.t=T(x.t);});arr(W.daily).forEach(function(d){d.hi=T(d.hi);d.lo=T(d.lo);});
+ W.unit=imp?'°F':'°C';W.wind_unit=imp?'mph':'km/h';W._conv=1;return W;}
+I.wxUnits=wxUnits;
 function num(v,d){v=+v;return isFinite(v)?v:(d||0);}
 function money(v,cur,dec){cur=cur==null?'$':cur;var n=Math.abs(v);var s=n.toLocaleString(undefined,{minimumFractionDigits:dec||0,maximumFractionDigits:dec==null?0:dec});return (v<0?'−':'')+cur+s;}
 function toast(t){var e=document.querySelector('.toast');if(!e){e=h('div','toast');document.body.appendChild(e);}e.textContent=t;e.classList.add('on');clearTimeout(e._t);e._t=setTimeout(function(){e.classList.remove('on');},1600);}
@@ -1453,7 +1784,7 @@ X.calculator=function(b){var w=h('div','blk');if(b.title)w.appendChild(label(b.t
  run();return w;};
 /* ---------- weather (Open-Meteo, resolved server-side) ---------- */
 var DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-X.weather=function(b){var w=h('div','blk');if(b.title)w.appendChild(label(b.title));var W=b.weather;var p=h('div','panel wx');w.appendChild(p);
+X.weather=function(b){var w=h('div','blk');if(b.title)w.appendChild(label(b.title));var W=wxUnits(b.weather,b);var p=h('div','panel wx');w.appendChild(p);
  if(!W){p.appendChild(txt('div','muted','Weather for '+(b.location||'this place')+' is unavailable right now.'));return w;}
  var top=h('div','row2');var now=h('div','now');now.appendChild(txt('div','ico',W.now.icon));var nt=h('div','');nt.appendChild(txt('div','big',Math.round(W.now.t)+W.unit));nt.appendChild(txt('div','muted',W.now.text+' · feels '+Math.round(W.now.feels)+W.unit));now.appendChild(nt);top.appendChild(now);
  var rt=h('div','');rt.style.textAlign='right';rt.appendChild(txt('div','',W.label));rt.appendChild(txt('div','faint','💧 '+W.now.rh+'%  ·  💨 '+Math.round(W.now.wind)+' '+W.wind_unit));top.appendChild(rt);p.appendChild(top);
@@ -1534,7 +1865,7 @@ function cardText(S){var L=[];if(S.title)L.push('# '+S.title);if(S.subtitle)L.pu
    case 'stats':it.forEach(function(s){L.push('- '+s.label+': '+s.value+(s.delta?' ('+s.delta+')':''));});break;
    case 'compare':it.forEach(function(c){L.push(c.title+':');arr(c.points).forEach(function(p){L.push('  - '+p);});if(c.verdict)L.push('  → '+c.verdict);});break;
    case 'budget':var t=0,cur=b.currency==null?'$':b.currency;it.forEach(function(x){var s=num(x.amount)*num(x.qty,1)*((x.per_person&&b.people)?b.people:1);t+=s;L.push('- '+x.label+': '+money(s,cur));});L.push('Total: '+money(t,cur));break;
-   case 'weather':if(b.weather){var W=b.weather;L.push(W.label+' now: '+Math.round(W.now.t)+W.unit+', '+W.now.text);arr(W.daily).forEach(function(d){L.push('- '+d.date+': '+d.text+' '+Math.round(d.hi)+'/'+Math.round(d.lo)+W.unit);});}break;
+   case 'weather':if(b.weather){var W=wxUnits(b.weather,b);L.push(W.label+' now: '+Math.round(W.now.t)+W.unit+', '+W.now.text);arr(W.daily).forEach(function(d){L.push('- '+d.date+': '+d.text+' '+Math.round(d.hi)+'/'+Math.round(d.lo)+W.unit);});}break;
    case 'stock':arr(b.quotes).forEach(function(q){if(q.price!=null)L.push('- '+q.symbol+': '+q.price+' '+q.currency+(q.prev?' ('+((q.price-q.prev)/q.prev*100).toFixed(2)+'%)':''));});break;
    case 'links':it.forEach(function(x){L.push('- '+(x.title||x.url)+': '+x.url);});break;
    case 'email':L.push('To: '+(b.to||'')+'\nSubject: '+(b.subject||'')+'\n\n'+(b.body||''));break;
@@ -1617,7 +1948,21 @@ function vstyle(dark){var c=dark?PAL.dark:PAL.light;var name=['coalesce',['get',
  {id:'nb',type:'symbol',source:'p','source-layer':'place',minzoom:10,maxzoom:15,filter:['in','class','suburb','quarter','neighbourhood'],layout:{'text-field':name,'text-font':['Noto Sans Regular'],'text-size':10,'text-letter-spacing':.08,'text-transform':'uppercase','text-max-width':8},paint:{'text-color':c.minor,'text-halo-color':c.halo,'text-halo-width':1.2}},
  {id:'city',type:'symbol',source:'p','source-layer':'place',minzoom:5,maxzoom:13,filter:['in','class','city','town'],layout:{'text-field':name,'text-font':['Noto Sans Regular'],'text-size':14,'text-max-width':8},paint:{'text-color':c.label,'text-halo-color':c.halo,'text-halo-width':1.5}}]};}
 function rstyle(dark){return {version:8,sources:{r:{type:'raster',tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/'+(dark?'Canvas/World_Dark_Gray_Base':'World_Street_Map')+'/MapServer/tile/{z}/{y}/{x}'],tileSize:256,maxzoom:19,attribution:'Tiles © Esri · © OpenStreetMap'}},layers:[{id:'r',type:'raster',source:'r'}]};}
-function fmtKm(km){return km<10?km.toFixed(1)+' km':Math.round(km)+' km';}
+function fmtKm(km){if(I.units()==='imperial'){var mi=km/1.609344;return mi<10?mi.toFixed(1)+' mi':Math.round(mi)+' mi';}return km<10?km.toFixed(1)+' km':Math.round(km)+' km';}
+/* map apps: Google Maps keeps every stop; Apple Maps and OpenStreetMap take start -> end; GPX carries all stops plus
+   the street route for OsmAnd, Organic Maps, Garmin, motorcycle navigators and Google My Maps */
+function ll(p){return (+p.lat).toFixed(6)+','+(+p.lng).toFixed(6);}
+function appleUrl(list,mode){if(list.length===1)return 'https://maps.apple.com/?ll='+ll(list[0])+'&q='+encodeURIComponent(list[0].name||'Pin');
+ return 'https://maps.apple.com/?saddr='+ll(list[0])+'&daddr='+ll(list[list.length-1])+'&dirflg='+(mode==='walk'?'w':'d');}
+function osmUrl(list,mode){var a=list[0];if(list.length===1)return 'https://www.openstreetmap.org/?mlat='+(+a.lat).toFixed(6)+'&mlon='+(+a.lng).toFixed(6)+'#map=16/'+(+a.lat).toFixed(5)+'/'+(+a.lng).toFixed(5);
+ var eng={walk:'fossgis_osrm_foot',bike:'fossgis_osrm_bike'}[mode]||'fossgis_osrm_car';return 'https://www.openstreetmap.org/directions?engine='+eng+'&route='+encodeURIComponent(ll(a)+';'+ll(list[list.length-1]));}
+function gpx(name,list,line){var e=function(s){return String(s==null?'':s).replace(/[<>&"]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c];});};
+ var x=['<?xml version="1.0" encoding="UTF-8"?>','<gpx version="1.1" creator="Frontier UI" xmlns="http://www.topografix.com/GPX/1/1">','<metadata><name>'+e(name)+'</name></metadata>'];
+ list.forEach(function(p){x.push('<wpt lat="'+(+p.lat).toFixed(6)+'" lon="'+(+p.lng).toFixed(6)+'"><name>'+e(p.name)+'</name>'+(p.note||p.time?'<desc>'+e([p.time,p.note].filter(Boolean).join(' - '))+'</desc>':'')+'</wpt>');});
+ x.push('<rte><name>'+e(name)+'</name>');list.forEach(function(p){x.push('<rtept lat="'+(+p.lat).toFixed(6)+'" lon="'+(+p.lng).toFixed(6)+'"><name>'+e(p.name)+'</name></rtept>');});x.push('</rte>');
+ if(line&&line.length>1){x.push('<trk><name>'+e(name)+' (street route)</name><trkseg>');line.forEach(function(c){x.push('<trkpt lat="'+(+c[0]).toFixed(6)+'" lon="'+(+c[1]).toFixed(6)+'"/>');});x.push('</trkseg></trk>');}
+ x.push('</gpx>');return x.join('\n');}
+function saveFile(name,text,mime){var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:mime}));a.download=name;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},2000);}
 function fmtMin(m){m=Math.round(m);return m<60?m+' min':Math.floor(m/60)+' h '+(m%60?m%60+' min':'');}
 function gmapsUrl(list,mode){list=list.slice(0,10);if(!list.length)return '';var ll=function(p){return (+p.lat).toFixed(6)+','+(+p.lng).toFixed(6);};
  if(list.length===1)return 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(list[0].name?list[0].name+' '+ll(list[0]):ll(list[0]));
@@ -1637,7 +1982,10 @@ function mapBlock(b){
  var ctlL=h('div','mctl l'),ctlR=h('div','mctl r');box.appendChild(ctlL);box.appendChild(ctlR);
  var sel=null;if(groups.length>1){sel=document.createElement('select');sel.className='mbtn';var o=document.createElement('option');o.value='';o.textContent='All groups';sel.appendChild(o);groups.forEach(function(g){var oo=document.createElement('option');oo.value=g;oo.textContent=g;sel.appendChild(oo);});ctlL.appendChild(sel);}
  var bFit=h('button','mbtn ic',[icon('nav')]);bFit.title='Fit all places';ctlL.appendChild(bFit);
- var bG=h('button','mbtn',[icon('ext'),txt('span','','Google Maps')]);bG.title='Open this route in Google Maps';ctlR.appendChild(bG);
+ var APPS={google:'Google Maps',apple:'Apple Maps',osm:'OpenStreetMap',gpx:'GPX file'};var primary=APPS[UI.map_app]?UI.map_app:'google';
+ var gw=h('div','mgrp');var bG=h('button','mbtn',[icon('ext'),txt('span','',APPS[primary])]);bG.title='Open this route in '+APPS[primary];var bM=h('button','mbtn ic',[icon('chev')]);bM.title='Other map apps';gw.appendChild(bG);gw.appendChild(bM);ctlR.appendChild(gw);
+ var mm=h('div','mmenu');[['google','Google Maps','all stops'],['apple','Apple Maps','start → end'],['osm','OpenStreetMap','start → end'],['gpx','Download GPX','OsmAnd, Organic Maps, Garmin…']].forEach(function(o){var it=h('button','',[txt('span','',o[1]),txt('small','',o[2])]);it.onclick=function(e){e.stopPropagation();mm.classList.remove('on');openApp(o[0]);};mm.appendChild(it);});
+ gw.appendChild(mm);bM.onclick=function(e){e.stopPropagation();mm.classList.toggle('on');};document.addEventListener('click',function(){mm.classList.remove('on');});
  var bExp=h('button','mbtn',[icon('exp'),txt('span','','Expand')]);ctlR.appendChild(bExp);
  var pop=h('div','mpop');box.appendChild(pop);
  var stat=txt('div','mstat','');box.appendChild(stat);
@@ -1647,7 +1995,11 @@ function mapBlock(b){
   if(!rs.length){stat.style.display='none';return;}var km=0,mn=0;rs.forEach(function(r){km+=r.km;mn+=r.min;});var walk=rs[0].mode==='walk';
   stat.textContent=(walk?'🚶 ':'🚗 ')+fmtKm(km)+' · '+fmtMin(mn)+(walk?' walking':' by car')+' · '+visible().length+' stops'+(curDay?' · '+curDay:'');stat.style.display='block';}
  setStat();
- bG.onclick=function(){var r=routeFor(curDay)||b.route_geo||{};I.openLink(gmapsUrl(visible(),r.mode||b.mode));};
+ function openApp(kind){var r=routeFor(curDay)||b.route_geo||{};var md=r.mode||b.mode;var list=visible();if(!list.length)return;
+  if(kind==='gpx'){saveFile(((I.S.title||'route')+(curDay?' '+curDay:'')).replace(/[^\w -]+/g,'').trim()+'.gpx',gpx((I.S.title||'Route')+(curDay?' - '+curDay:''),list,r.line),'application/gpx+xml');return;}
+  I.openLink(kind==='apple'?appleUrl(list,md):kind==='osm'?osmUrl(list,md):gmapsUrl(list,md));}
+ bG.onclick=function(e){e.stopPropagation();openApp(primary);};
+ if(b.route_status){wrap.appendChild(txt('div','rstat','⚠ '+b.route_status));}
  var reg={places:places,select:function(){}};MAPS.push(reg);
  loadLib().then(function(lib){return localBase(lib).then(function(ok){return [lib,ok];});}).then(function(r){var lib=r[0],useLocal=r[1];
   var usedRaster=false;function styleFor(dark){return useLocal?lstyle(dark):vstyle(dark);}
@@ -1696,7 +2048,27 @@ function mapBlock(b){
   var big=false;bExp.onclick=function(){big=!big;box.style.height=(big?Math.max(560,Math.round(base*1.7)):base)+'px';bExp.innerHTML='';bExp.appendChild(icon(big?'col':'exp'));bExp.appendChild(txt('span','',big?'Collapse':'Expand'));setTimeout(function(){map.resize();fit(visible(),true);},380);};
   document.addEventListener('iui-theme',function(){usedRaster=false;map.setStyle(styleFor(I.isDark()));});
   new ResizeObserver(function(){map.resize();}).observe(box);
- }).catch(function(){box.style.height='auto';box.style.padding='12px';var l=h('div','maplist');places.forEach(function(p,i){l.appendChild(txt('span','tag',(p.icon||(i+1)+'.')+' '+p.name));});box.appendChild(l);});
+ }).catch(function(err){
+   /* No WebGL (GPU blocklisted, hardened Firefox/LibreWolf profiles, some VMs) or the map library was blocked:
+      draw a static sketch of the stops and street routes instead of a broken strip. Map-app links and GPX still work. */
+   [].slice.call(box.querySelectorAll('.maplibregl-canvas-container,.maplibregl-control-container,canvas')).forEach(function(e){e.remove();});
+   box.classList.add('nogl');box.style.height='auto';bExp.style.display='none';bFit.style.display='none';
+   var lines=[];if(days.length){days.forEach(function(d){var r=DR[d];if(r&&r.line)lines.push([r.line,dayColor(d)]);});}else if(b.route_geo&&b.route_geo.line)lines.push([b.route_geo.line,'#4f8ef7']);
+   var pts=places.filter(function(p){return p.lat!=null&&p.lng!=null;});var all=pts.map(function(p){return [p.lat,p.lng];});lines.forEach(function(l){all=all.concat(l[0]);});
+   if(all.length){var la=all.map(function(x){return x[0];}),lo=all.map(function(x){return x[1];});var y0=Math.min.apply(null,la),y1=Math.max.apply(null,la),x0=Math.min.apply(null,lo),x1=Math.max.apply(null,lo);
+    var k=Math.cos((y0+y1)/2*Math.PI/180),W=640,H=300,P=34,sw=Math.max((x1-x0)*k,1e-4),sh=Math.max(y1-y0,1e-4),sc=Math.min((W-2*P)/sw,(H-2*P)/sh);
+    var X=function(x){return W/2+((x-(x0+x1)/2)*k)*sc;},Y=function(y){return H/2-(y-(y0+y1)/2)*sc;};
+    var NS='http://www.w3.org/2000/svg',sv=document.createElementNS(NS,'svg');sv.setAttribute('viewBox','0 0 '+W+' '+H);sv.setAttribute('class','msketch');sv.setAttribute('role','img');sv.setAttribute('aria-label','Route sketch');
+    var mk=function(t,a){var e=document.createElementNS(NS,t);for(var q in a)e.setAttribute(q,a[q]);sv.appendChild(e);return e;};
+    lines.forEach(function(l){mk('polyline',{points:l[0].map(function(c){return X(c[1]).toFixed(1)+','+Y(c[0]).toFixed(1);}).join(' '),fill:'none',stroke:l[1]||'#4f8ef7','stroke-width':4,'stroke-linejoin':'round','stroke-linecap':'round',opacity:.9});});
+    if(!lines.length&&pts.length>1)mk('polyline',{points:pts.map(function(p){return X(p.lng).toFixed(1)+','+Y(p.lat).toFixed(1);}).join(' '),fill:'none',stroke:'#8a8f98','stroke-width':2,'stroke-dasharray':'6 6'});
+    var cnt={};pts.forEach(function(p,i){var n=p.day?(cnt[p.day]=(cnt[p.day]||0)+1):i+1;var cx=X(p.lng),cy=Y(p.lat);mk('circle',{cx:cx,cy:cy,r:11,fill:dayColor(p.day)||'#4f8ef7',stroke:'#fff','stroke-width':2});
+     var t=mk('text',{x:cx,y:cy+4,'text-anchor':'middle','font-size':11,'font-weight':700,fill:'#fff'});t.textContent=String(n);
+     var lb=mk('text',{x:cx+15,y:cy+4,'font-size':12,'class':'mslab'});lb.textContent=(p.name||'').slice(0,34);});
+    box.appendChild(sv);}
+   box.appendChild(txt('div','faint mnote','Interactive map unavailable in this browser (WebGL is off or the map library was blocked) - showing a route sketch. Use the map-app button for turn-by-turn.'));
+   var l=h('div','maplist');places.forEach(function(p,i){l.appendChild(txt('span','tag',(p.icon||(i+1)+'.')+' '+p.name));});box.appendChild(l);
+   try{console.warn('Frontier UI map fallback:',err&&err.message||err);}catch(e){}});
  return wrap;}
 '''
 _HTML += r'''/* ---------- other blocks ---------- */
@@ -1782,16 +2154,23 @@ setTimeout(I.reportHeight,50);
 
 class Tools:
     """Frontier UI: rich, ChatGPT-style visual answers (photos, maps, places, itineraries, charts, live data) plus real
-    Word/Excel/PowerPoint/PDF files made, read and edited with all 15 ArtCraft apps, Gmail drafts and Open WebUI notes."""
+    Word/Excel/PowerPoint/PDF files made, read and edited with all 16 ArtCraft apps, Gmail drafts and Open WebUI notes."""
 
     class Valves(BaseModel):
-        searxng_url: str = Field(default="http://searxng:8080", description="SearXNG base URL used for image search (JSON format enabled).")
+        searxng_url: str = Field(default="", description="Optional. Your SearXNG base URL (JSON format enabled), e.g. http://searxng:8080, for broader photo coverage. Empty = keyless Wikipedia / Wikimedia Commons / Openverse only.")
         maplibre_cdn: str = Field(default="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1", description="MapLibre GL JS package base URL (fallback when tiles_url is not reachable).")
         tiles_url: str = Field(default="", description="Self-hosted basemap folder: planet.pmtiles, fonts/, sprites/v4/ and js/ (maplibre-gl, pmtiles, basemaps). Empty = OpenFreeMap.")
-        resolve_images: bool = Field(default=True, description="Resolve photo queries to real images (Wikipedia + SearXNG).")
+        resolve_images: bool = Field(default=True, description="Resolve photo queries to real images (keyless by default; SearXNG and API providers are optional).")
         resolve_maps: bool = Field(default=True, description="Geocode places and draw street routes (keyless OSM services).")
         live_data: bool = Field(default=True, description="Fetch live weather (Open-Meteo) and quotes (Yahoo Finance) for weather/stock blocks. Both are keyless.")
-        temperature_unit: str = Field(default="fahrenheit", description="fahrenheit or celsius")
+        units: Literal["auto", "metric", "imperial"] = Field(default="auto", description="Weather and distance units. auto = each viewer's browser locale (US/Liberia/Myanmar -> imperial, everyone else metric). Users can override in their own Frontier UI settings.")
+        map_app: Literal["google", "apple", "osm", "gpx"] = Field(default="google", description="Main 'Open in…' button on maps (the others stay in its menu): google, apple, osm (OpenStreetMap) or gpx (download for OsmAnd/Organic Maps/Garmin).")
+        image_provider: Literal["auto", "searxng", "wikipedia", "commons", "openverse", "brave", "google", "pexels", "unsplash"] = Field(default="auto", description="auto = SearXNG (if reachable) -> Wikipedia/Wikimedia Commons -> Openverse -> any keyed provider below. Pick one to try it first; the rest stay as fallbacks. Works with no keys and no SearXNG.")
+        brave_api_key: str = Field(default="", description="Optional. Brave Search API key (image search). Kept server-side.")
+        google_api_key: str = Field(default="", description="Optional. Google Programmable Search API key (needs google_cx). Kept server-side.")
+        google_cx: str = Field(default="", description="Optional. Google Programmable Search engine id with image search on.")
+        pexels_api_key: str = Field(default="", description="Optional. Pexels API key (stock photos; good for generic scenes). Kept server-side.")
+        unsplash_access_key: str = Field(default="", description="Optional. Unsplash access key (stock photos). Kept server-side.")
         embedding_url: str = Field(default="openwebui", description="'openwebui' = reuse Open WebUI's configured embedding engine (e.g. EmbeddingGemma) to rerank photos and link timeline rows to map pins; or an OpenAI-compatible base URL; empty = off.")
         embedding_model: str = Field(default="embeddinggemma-2", description="Embedding model name (only for a direct URL).")
         embedding_api_key: str = Field(default="", description="Bearer key (only for a direct URL).")
@@ -1801,13 +2180,30 @@ class Tools:
         craft_web_url: str = Field(default="", description="Base URL of the self-hosted Craft web apps (…/wordcraft/, …/launcher/).")
         page_screenshots: bool = Field(default=True, description="Use headless Chromium (via the Craft bridge) for link preview screenshots.")
 
+    class UserValves(BaseModel):
+        units: Literal["default", "auto", "metric", "imperial"] = Field(default="default", description="Your weather/distance units. default = the admin setting; auto = your browser locale.")
+        map_app: Literal["default", "google", "apple", "osm", "gpx"] = Field(default="default", description="Your main 'Open in…' map button.")
+
     def __init__(self):
         self.valves = self.Valves()
 
     # ---------------- helpers ----------------
-    def _ui(self, card=""):
+    def _prefs(self, user=None):
         v = self.valves
-        return {"tiles": v.tiles_url.rstrip("/"), "craft_web": v.craft_web_url.rstrip("/"), "craft_desktop": v.craft_desktop_url, "card": card,
+        uv = (user or {}).get("valves") if isinstance(user, dict) else None
+        def pick(name, default):
+            val = getattr(uv, name, None) if uv is not None and not isinstance(uv, dict) else (uv or {}).get(name)
+            return val if val and val != "default" else default
+        return {"units": pick("units", v.units), "map_app": pick("map_app", v.map_app)}
+
+    def _images_cfg(self):
+        v = self.valves
+        return {"provider": v.image_provider, "brave_key": v.brave_api_key.strip(), "google_key": v.google_api_key.strip(), "google_cx": v.google_cx.strip(),
+                "pexels_key": v.pexels_api_key.strip(), "unsplash_key": v.unsplash_access_key.strip()}
+
+    def _ui(self, card="", user=None):
+        v = self.valves
+        return {**self._prefs(user), "tiles": v.tiles_url.rstrip("/"), "craft_web": v.craft_web_url.rstrip("/"), "craft_desktop": v.craft_desktop_url, "card": card,
                 "apps": [{"id": k, "name": n, "desc": d, "emoji": e} for k, (n, d, e) in CRAFT_APPS.items()] if v.craft_web_url or v.craft_desktop_url else []}
 
     def _bridge(self):
@@ -1824,7 +2220,7 @@ class Tools:
         return HTMLResponse(content=_build_html(spec, theme, self.valves.maplibre_cdn, self.valves.tiles_url), headers={"Content-Disposition": "inline"})
 
     # ---------------- 1. rich card ----------------
-    async def render_frontier_ui(self, spec: str, __event_emitter__=None, __event_call__=None, __request__=None) -> tuple:
+    async def render_frontier_ui(self, spec: dict, __user__: dict = None, __event_emitter__=None, __event_call__=None, __request__=None) -> tuple:
         """
         Show a rich visual answer (ChatGPT-style generative UI) inside the chat. Use it whenever the answer has places, trips,
         itineraries, products, comparisons, numbers, prices, weather, stocks, links, timelines or anything that reads better with
@@ -1838,8 +2234,8 @@ class Tools:
         Blocks (use 3-7, in reading order; mix types, lead with text, put the most visual block early):
           {"type":"text","md":"markdown; **bold**, [link](url), cite sources inline as [1] [2]"}
           {"type":"images","items":[{"query":"Golden Gate Bridge from Baker Beach","caption":"Golden Gate"}]}  (3 specific queries)
-          {"type":"map","area":"Kyoto, Japan","mode":"walk|drive","places":[{"name":"Fushimi Inari Taisha","lat":34.9671,"lng":135.7727,"icon":"⛩️","time":"8:00","note":"Go early"}]}
-              (2-12 places in visiting order; street route drawn automatically; MULTI-DAY trips: use
+          {"type":"map","area":"Kyoto, Japan","mode":"walk|bike|drive|motorcycle","places":[{"name":"Fushimi Inari Taisha","lat":34.9671,"lng":135.7727,"icon":"⛩️","time":"8:00","note":"Go early"}]}
+              (2-12 places in visiting order; the street route is drawn automatically - no flag needed; "route":false = pins only; MULTI-DAY trips: use
                "days":[{"label":"Day 1","places":[...]},{"label":"Day 2","places":[...]}] instead of "places" -> day tabs, one coloured route per day)
           {"type":"places","area":"Kyoto","items":[{"name","subtitle","rating":4.6,"price":"$$","tags":["Ramen","Late night"],"description","url"?,"image":"photo query"?}]}
               (4+ items get sort/filter chips automatically - always give rating, price and 1-3 tags)
@@ -1863,23 +2259,21 @@ class Tools:
         Rules: concise, scannable copy; real facts only; cite with [n] only when sources are given; trips = images + map + timeline
         (+ budget when costs matter) with timeline "place" values matching map place names exactly.
 
-        :param spec: The JSON object described above (as a JSON string).
+        :param spec: The spec object described above. Pass it as a JSON object (not a string). Minimal example:
+            {"title":"Kyoto day","blocks":[{"type":"text","md":"…"},{"type":"map","places":[{"name":"Kiyomizu-dera","lat":34.995,"lng":135.785},{"name":"Gion","lat":35.004,"lng":135.775}]}],"followups":["Where to eat?"]}
         :return: An interactive rich embed rendered inline in the chat.
         """
         try:
-            data = _loads_lenient(spec)
+            data, notes = _normalize_spec(_loads_lenient(spec))
+        except SpecError as e:
+            return f"Frontier UI could not use the spec: {e}"
         except Exception as e:
-            return f"Frontier UI could not parse spec JSON ({e}). Fix the JSON and call render_frontier_ui again."
-        if isinstance(data, list):
-            data = {"blocks": data}
-        if not isinstance(data, dict):
-            return "Frontier UI spec must be a JSON object with a blocks array."
+            return f"Frontier UI could not read the spec ({type(e).__name__}: {e}). Pass ONE JSON object with a \"blocks\" array and call render_frontier_ui again."
         title = str(data.get("title") or "Response")[:120]
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"Building “{title}”…", "done": False}})
         v = self.valves
-        opts = {"live": v.live_data, "unit": "celsius" if v.temperature_unit.lower().startswith("c") else "fahrenheit", "bridge": self._bridge(),
-                "embed": None}
+        opts = {"live": v.live_data, "bridge": self._bridge(), "images": self._images_cfg(), "embed": None}
         if v.embedding_url == "openwebui":
             fn = getattr(getattr(getattr(__request__, "app", None), "state", None), "EMBEDDING_FUNCTION", None)
             if fn:
@@ -1891,7 +2285,7 @@ class Tools:
         except Exception:
             pass
         card = secrets.token_hex(4)
-        data["_ui"] = self._ui(card)
+        data["_ui"] = self._ui(card, __user__)
         _CARDS[card] = data
         while len(_CARDS) > 300:
             _CARDS.pop(next(iter(_CARDS)))
@@ -1899,7 +2293,11 @@ class Tools:
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"Showing “{title}”", "done": True}})
         kinds = [b.get("type") for b in data.get("blocks", []) if isinstance(b, dict)]
+        extra = [f"route: {b['route_status']}" for b in data.get("blocks", []) if isinstance(b, dict) and b.get("route_status")]
+        if notes:
+            extra.append("spec fixes applied: " + "; ".join(notes[:6]))
         return resp, (f"Frontier UI card “{title}” (card id: {card}) is rendered and visible to the user (blocks: {', '.join(map(str, kinds))}). "
+                      + ("Notes: " + " | ".join(extra) + ". " if extra else "") +
                       "Reply with one or two short sentences that add context; do not repeat the card or show JSON. "
                       f"If the user later asks to export or save this card, call craft_file or save_note with card=\"{card}\".")
 
@@ -1984,7 +2382,7 @@ class Tools:
         (PhotoCraft/LightCraft for photos, PdfCraft for PDFs, VectorCraft for SVG, FilmCraft for video, SoundCraft for audio).
 
         :param url: public http(s) URL of the file.
-        :param app: optional app id: photocraft, lightcraft, pdfcraft, vectorcraft, filmcraft, soundcraft, wordcraft, gridcraft, deckcraft, cadcraft, solidcraft, figcraft, designcraft, effectcraft, craft-anything.
+        :param app: optional app id: photocraft, lightcraft, pdfcraft, vectorcraft, filmcraft, soundcraft, wordcraft, gridcraft, deckcraft, cadcraft, solidcraft, figcraft, designcraft, effectcraft, texturecraft, craft-anything.
         :return: A card confirming where it opened.
         """
         try:
@@ -2036,7 +2434,7 @@ class Tools:
         """
         Open a file the user uploaded (or one made earlier in this chat) with the matching ArtCraft app and read it:
         Word/ODT/RTF (WordCraft), Excel/CSV with formulas (GridCraft), PowerPoint (DeckCraft), PDF (PdfCraft), images and PSD
-        (PhotoCraft), RAW photos (LightCraft), SVG/AI/EPS (VectorCraft), DXF/DWG (CADCraft), STEP/STL/3MF (SolidCraft),
+        (PhotoCraft), RAW photos (LightCraft), SVG/AI/EPS (VectorCraft), DXF/DWG (CADCraft), STEP/STL/3MF (SolidCraft), GLB/glTF/FBX/USD/OBJ 3D models and .tcraft (TextureCraft),
         Figma/Sketch/Penpot (FigCraft), IDML (DesignCraft), audio (SoundCraft), video (FilmCraft), EffectCraft projects, and any
         other file or app bundle (Craft Anything's first look). Use it before answering questions about an attached file or
         before editing it. Shows a preview card and returns the file's text, structure and metadata to you.
@@ -2183,7 +2581,7 @@ class Tools:
         """
         Look up the engine commands (ids and parameters) an ArtCraft app accepts, for craft_edit.
         Apps: wordcraft, gridcraft, deckcraft, pdfcraft, photocraft, lightcraft, vectorcraft, designcraft, figcraft, filmcraft,
-        effectcraft, soundcraft, cadcraft, solidcraft. Always pass a search (e.g. "replace", "cell", "slide", "resize", "export").
+        effectcraft, soundcraft, cadcraft, solidcraft, texturecraft. Always pass a search (e.g. "replace", "cell", "slide", "resize", "export").
 
         :param app: the app id.
         :param search: words that must appear in the command (id, label or parameters).

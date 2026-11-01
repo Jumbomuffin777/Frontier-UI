@@ -23,6 +23,7 @@ CRAFT_APPS = {
     "figcraft": ("FigCraft", "UI design & prototyping", "🧩"), "filmcraft": ("FilmCraft", "Video editing", "🎬"),
     "effectcraft": ("EffectCraft", "Motion graphics & VFX", "✨"), "soundcraft": ("SoundCraft", "Audio recording & mixing", "🎚️"),
     "cadcraft": ("CADCraft", "CAD drafting", "📐"), "solidcraft": ("SolidCraft", "Parametric 3D CAD", "🧊"),
+    "texturecraft": ("TextureCraft", "3D texture painting & PBR materials", "🎨"),
     "craft-anything": ("Craft Anything", "See how any software works", "🔍"),
 }
 CRAFT_EXT = {  # file extension -> app that reads / edits it (mirrors the bridge)
@@ -36,6 +37,7 @@ CRAFT_EXT = {  # file extension -> app that reads / edits it (mirrors the bridge
     **{e: "filmcraft" for e in "mp4 mov webm mkv avi mxf".split()}, "idml": "designcraft",
     **{e: "figcraft" for e in "fig figcraft sketch penpot".split()},
     **{e: "lightcraft" for e in "dng heic cr2 cr3 nef arw raf orf rw2 pef".split()}, "ecproj": "effectcraft",
+    **{e: "texturecraft" for e in "tcraft glb gltf fbx dae usd usda usdc usdz abc obj ply".split()},
 }
 FORMAT_KIND = {"docx": "doc", "pdf": "doc", "odt": "doc", "rtf": "doc", "html": "doc", "md": "doc", "txt": "doc",
                "xlsx": "sheet", "csv": "sheet", "pptx": "deck", "gif": "deck"}

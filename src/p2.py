@@ -1,4 +1,4 @@
-
+﻿
 
 def _is_url(s):
     return isinstance(s, str) and s.startswith(("https://", "http://", "data:image/"))
@@ -66,7 +66,7 @@ async def _resolve(spec, searx, do_images=True, do_maps=True, opts=None):
 
         async def run_img(obj, key, q, wiki):
             try:
-                obj[key] = await asyncio.wait_for(_images_for(session, searx, q, wiki), 6)
+                obj[key] = await asyncio.wait_for(_images_for(session, searx, q, wiki, opts.get("images")), 8)
             except Exception:
                 obj[key] = []
 
@@ -107,33 +107,53 @@ async def _resolve(spec, searx, do_images=True, do_maps=True, opts=None):
                     p["lat"] = p["lng"] = None
 
             await asyncio.gather(*(one(p) for p in places), return_exceptions=True)
-            mode = str(b.get("mode") or "auto").lower()
-            mode = mode if mode in ("walk", "drive") else "auto"
+            mode = _route_mode(b.get("mode") or b.get("travel") or b.get("transport"))
+            b["mode"] = mode
             days = []
             for p in places:
                 if p.get("day") and p["day"] not in days:
                     days.append(p["day"])
+            dropped = [str(p.get("name") or "?") for p in places if p.get("lat") is None]
+            want_route = b.get("route", True) not in (False, "false", "no", 0)  # on by default; "route": false turns it off
+            statuses = []
 
-            async def route_for(ps):
+            async def route_for(ps, label=""):
                 pts = [(p["lat"], p["lng"]) for p in ps if p.get("lat") is not None]
-                if b.get("route", True if days else False) and 2 <= len(pts) <= 25 and max(_km(pts[0], q) for q in pts) < 400:
-                    try:
-                        return await _route(session, pts, mode)
-                    except Exception:
-                        return None
-                return None
+                if not want_route:
+                    return None
+                if len(pts) < 2:
+                    statuses.append(f"{label}no route: fewer than 2 stops with valid coordinates" if len(ps) >= 2 else "")
+                    return None
+                if max(_km(pts[0], q) for q in pts) > 2500:
+                    statuses.append(f"{label}no route: stops are more than 2,500 km apart")
+                    return None
+                note = ""
+                if len(pts) > 25:
+                    pts, note = pts[:25], " (first 25 stops)"
+                try:
+                    r = await _route(session, pts, mode)
+                    r["note"] = note.strip()
+                    return r
+                except Exception as e:
+                    statuses.append(f"{label}street route unavailable: {e}; showing straight lines")
+                    return None
 
             if len(days) > 1:  # one street route per day; the "All" view shows every day's route in its own colour
-                res = await asyncio.gather(*(route_for([p for p in places if p.get("day") == d]) for d in days), return_exceptions=True)
+                res = await asyncio.gather(*(route_for([p for p in places if p.get("day") == d], f"{d}: ") for d in days), return_exceptions=True)
                 b["day_routes"] = {d: (r if isinstance(r, dict) else None) for d, r in zip(days, res)}
                 b["days_order"] = days
             else:
                 b["route_geo"] = await route_for(places)
+            b["route"] = want_route
+            if dropped:
+                statuses.append(f"{len(dropped)} stop(s) not placed (no valid coordinates): {', '.join(dropped[:5])}")
+            b["route_status"] = "; ".join(s for s in statuses if s)
 
         async def run_live(kind, b):
             try:
                 if kind == "weather":
-                    b["weather"] = await asyncio.wait_for(_weather(session, b, opts.get("unit", "fahrenheit")), 7)
+                    # always fetched in metric; the card converts to °F/mph when the viewer's units are imperial
+                    b["weather"] = await asyncio.wait_for(_weather(session, b, "celsius"), 7)
                 elif kind == "stock":
                     syms = b.get("symbols") or ([b["symbol"]] if b.get("symbol") else [])
                     qs = await asyncio.gather(*(asyncio.wait_for(_quote(session, s), 7) for s in syms[:6]), return_exceptions=True)

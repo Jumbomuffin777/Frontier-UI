@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.3.0 — 2026-11-01
+**Works out of the box with no SearXNG and no keys, metric/imperial, reliable routes and links, TextureCraft.**
+
+Photos (reported: empty gray boxes without SearXNG)
+- Cause: place cards and timeline thumbnails searched SearXNG only, so without it they got no candidates.
+- Keyless by default: Wikipedia + Wikimedia Commons (author · licence kept) → Openverse. `searxng_url` now defaults to empty.
+- Optional broader coverage: SearXNG, Brave Search, Google Programmable Search, Pexels, Unsplash (`image_provider` picks the
+  first; the rest stay as fallbacks). Keys are used server-side only and never appear in the card, the browser or tool output.
+- An unreachable or failing provider is skipped for 5 minutes, so a missing SearXNG doesn't slow every card.
+- A photo that can't be found shows a clean placeholder instead of a gray box.
+
+Units (reported: °F/mph for an EU user)
+- New `units` valve: `auto` (default, from each viewer's browser locale), `metric` or `imperial`, plus a per-user override.
+  Weather and route distances follow it. Replaces `temperature_unit`.
+
+Maps and routes (reported: pins but no route lines)
+- Cause: single-day maps only drew a street route when the model added `"route": true`. Routes are now on by default
+  (`"route": false` = pins only). Modes: walk, bike, drive, motorcycle.
+- Router fallbacks (foot/bike → car, OSRM → FOSSGIS); the card and the model are told why when there is no route
+  (service down, invalid coordinates, stops too far apart).
+- Map apps menu: Google Maps, Apple Maps, OpenStreetMap, or download a GPX (OsmAnd, Organic Maps, Garmin). `map_app` picks the main button.
+- No WebGL (blocklisted GPU, hardened Firefox profiles, VMs) or blocked map library: a static route sketch instead of a broken strip.
+
+External links (reported: ERR_BLOCKED_BY_RESPONSE on desktop)
+- Cause: Open WebUI's sandbox doesn't let popups escape it, and Google, Apple Maps and OpenStreetMap send
+  Cross-Origin-Opener-Policy, so a tab opened from the card is blocked (switching map apps alone doesn't help).
+- Links now open through the Open WebUI window when "iframe Sandbox Allow Same Origin" is on, directly on phones and tablets and for
+  Open WebUI's own files, and otherwise copy the link and show a Copy / Try anyway sheet. The sandbox is not weakened.
+
+Tool calls (reported: about half failed with malformed JSON)
+- `spec` is now a JSON object parameter (a string still works), which avoids JSON-inside-a-string double escaping.
+- Bounded repairs: code fences, prose around the object, smart quotes, trailing commas, raw newlines, truncation,
+  double encoding, Python literals, a `{"spec": …}` wrapper, `components`/`sections` instead of `blocks`, common block-name slips.
+- When it still can't be read, the model gets the position, a snippet and an example to fix it.
+- Literal `\n` text from double-escaped output now becomes real line breaks (text, notes under the map, timeline).
+
+Also
+- **TextureCraft** (16th ArtCraft app): read GLB/glTF/FBX/DAE/USD/Alembic/OBJ/PLY and `.tcraft` projects with a rendered preview,
+  edit with engine commands into a new `.tcraft`, convert a model to a project or export its textures.
+- Regression tests: `tests/test_regressions.py` (no network) and `tests/test_browser.mjs` (Chromium, Firefox, WebKit).
+
+Upgrading: if you use SearXNG, set `searxng_url` (it no longer defaults to `http://searxng:8080`). `temperature_unit` is replaced by `units`.
+
 ## 1.2.1 — 2026-11-01
 - Fix: Download / Open note buttons now work (links are made absolute using your Open WebUI address).
 - Self-hosted Craft web apps: serve precompressed .wasm (gzip_static) so WordCraft & co. load much faster.

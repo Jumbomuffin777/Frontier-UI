@@ -25,7 +25,7 @@ WORK = threading.Semaphore(2)
 
 APPS = ["wordcraft", "gridcraft", "deckcraft", "cadcraft", "soundcraft", "photocraft", "vectorcraft",
         "filmcraft", "lightcraft", "pdfcraft", "effectcraft", "designcraft", "figcraft", "solidcraft",
-        "craft-anything", "artcraft-launcher"]
+        "texturecraft", "craft-anything", "artcraft-launcher"]
 EXT_APP = {
     "docx": "wordcraft", "doc": "wordcraft", "odt": "wordcraft", "rtf": "wordcraft", "md": "wordcraft",
     "dotx": "wordcraft", "docm": "wordcraft", "tex": "wordcraft", "txt": "wordcraft",
@@ -45,6 +45,7 @@ EXT_APP = {
     "dng": "lightcraft", "heic": "lightcraft", "cr2": "lightcraft", "cr3": "lightcraft", "nef": "lightcraft",
     "arw": "lightcraft", "raf": "lightcraft", "orf": "lightcraft", "rw2": "lightcraft", "pef": "lightcraft",
     "ecproj": "effectcraft",
+    **{e: "texturecraft" for e in "tcraft glb gltf fbx dae usd usda usdc usdz abc obj ply".split()},
 }
 # anything else (zip, exe, apk, app bundles, unknown binaries) is looked at by Craft Anything's triage
 MIME = {
@@ -354,6 +355,9 @@ def inspect_file(d):
             _, info = soft([c, "probe", p], tmp)
         elif app == "effectcraft":
             _, info = soft([c, "info", p], tmp)
+        elif app == "texturecraft":
+            _, info = soft([c, "info", p], tmp)
+            soft([c, "render", p, png, "--size", "1000x700"], tmp, timeout=180)
         else:  # craft-anything: first look at any other file (deep = may read the file's contents; never runs it)
             _, text = soft([c, "triage", p, "--format", "md", "--deep"], tmp, timeout=180)
         res.update({"name": os.path.basename(p), "size": os.path.getsize(p), "text": text[:30000], "info": info[:15000]})
@@ -422,6 +426,12 @@ def edit_file(d):
             s = os.path.join(tmp, "s.json")
             json.dump([{"command": x.get("command"), "params": x.get("params") or {}} for x in steps], open(s, "w"))
             run([c, "run", s, "--in", p, "--out", out], tmp)
+        elif app == "texturecraft":
+            if not out.lower().endswith(".tcraft"):
+                out = out.rsplit(".", 1)[0] + ".tcraft"
+            s = os.path.join(tmp, "s.json")
+            json.dump({"open": p, "steps": [{"id": x.get("command"), "params": x.get("params") or {}} for x in steps], "save": out}, open(s, "w"))
+            run([c, "batch", s], tmp)
         elif app == "effectcraft":
             s = os.path.join(tmp, "s.json")
             json.dump([{"command": x.get("command"), "params": x.get("params") or {}} for x in steps], open(s, "w"))
@@ -525,6 +535,13 @@ def convert_file(d):
                 raise ValueError("PDF converts to txt, png, jpg, tif, docx, md, html, odt or rtf")
         elif app == "solidcraft":
             run([c, "run", "--in", p, "--out", out], tmp, )
+        elif app == "texturecraft":
+            if fmt == "tcraft":  # mesh -> new project with a smart material
+                run([c, "new", p, out, "--sample"], tmp)
+            else:  # export the texture maps as a zip of images
+                d2 = os.path.join(tmp, "textures")
+                run([c, "export", p, d2] + ([] if fmt == "zip" else ["--format", fmt]), tmp)
+                out = shutil.make_archive(os.path.join(tmp, os.path.basename(p).rsplit(".", 1)[0] + "-textures"), "zip", d2)
         elif app == "designcraft":
             run([c, "run", "--in", p, "--export", out], tmp)
         elif app == "filmcraft":
