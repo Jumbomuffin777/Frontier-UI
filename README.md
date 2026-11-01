@@ -14,7 +14,7 @@ place cards, itineraries, charts and follow-ups, rendered right inside the chat.
 
 <img src="docs/demo-restaurants.gif" alt="Frontier UI answering “good Italian restaurants in Downtown Chicago” with photo cards, sources and follow-ups" width="860">
 
-**▶ [Watch the full demo video (2:40)](docs/demo.mp4)**
+**▶ [Watch the full demo video (2:40)](https://github.com/Jumbomuffin777/Frontier-UI/raw/main/docs/demo.mp4)**
 
 </div>
 
