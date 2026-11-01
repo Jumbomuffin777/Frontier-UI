@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1 — 2026-11-01
+- **Renamed to Frontier UI** (formerly Intelligent WebUI). The tool file is now `frontier_ui.py`, the tool id `frontier_ui`
+  and the main method `render_frontier_ui`. Upgrading: install the new file, copy your valves over, and enable it on your
+  models in place of the old one.
+
 ## 1.1.0 — 2026-11-01
 
 **New blocks**

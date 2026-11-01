@@ -328,7 +328,7 @@ async def _store_file(user, name, data, mime):
             "OpenWebUI-User-Name": user.get("name", ""), "OpenWebUI-File-Id": fid}
     _contents, path = await asyncio.to_thread(Storage.upload_file, io.BytesIO(data), f"{fid}_{name}", tags)
     res = Files.insert_new_file(user["id"], FileForm(id=fid, filename=name, path=path, data={},
-                                                     meta={"name": name, "content_type": mime, "size": len(data), "source": "intelligent_ui"}))
+                                                     meta={"name": name, "content_type": mime, "size": len(data), "source": "frontier_ui"}))
     if asyncio.iscoroutine(res):
         await res
     return fid, f"/api/v1/files/{fid}/content"
@@ -376,7 +376,7 @@ def _first_photo(it):
 
 
 def _spec_md(spec):
-    L = [f"# {spec.get('title') or 'Intelligent UI'}"]
+    L = [f"# {spec.get('title') or 'Frontier UI'}"]
     if spec.get("subtitle"):
         L.append(f"*{spec['subtitle']}*")
     for b in spec.get("blocks") or []:

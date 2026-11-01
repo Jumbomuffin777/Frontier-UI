@@ -1,18 +1,18 @@
 <div align="center">
 
-# ✨ Intelligent WebUI
+# ✨ Frontier UI
 
-**ChatGPT-style Intelligent UI for [Open WebUI](https://github.com/open-webui/open-webui)** — real photos, live street maps with routes,
+**ChatGPT-style generative UI for [Open WebUI](https://github.com/open-webui/open-webui)** — real photos, live street maps with routes,
 place cards, itineraries, charts and follow-ups, rendered right inside the chat.
 
 <a href="https://buymeacoffee.com/jumbomuffin777"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="48"></a>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](LICENSE)
 [![Open WebUI](https://img.shields.io/badge/Open%20WebUI-%E2%89%A5%200.6-0ea5e9.svg)](https://github.com/open-webui/open-webui)
-[![Python](https://img.shields.io/badge/Python-3.11%2B-3776ab.svg?logo=python&logoColor=white)](intelligent_ui.py)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776ab.svg?logo=python&logoColor=white)](frontier_ui.py)
 [![Single file](https://img.shields.io/badge/install-one%20file-a855f7.svg)](#-install)
 
-<img src="docs/demo-restaurants.gif" alt="Intelligent WebUI answering “good Italian restaurants in Downtown Chicago” with photo cards, sources and follow-ups" width="860">
+<img src="docs/demo-restaurants.gif" alt="Frontier UI answering “good Italian restaurants in Downtown Chicago” with photo cards, sources and follow-ups" width="860">
 
 </div>
 
@@ -21,7 +21,7 @@ place cards, itineraries, charts and follow-ups, rendered right inside the chat.
 ## Why
 
 Open WebUI answers in markdown. ChatGPT answers with an **interface**: photos of the places it mentions, a map with the route,
-cards you can scroll, and next questions you can tap. Intelligent WebUI brings that to any model in Open WebUI.
+cards you can scroll, and next questions you can tap. Frontier UI brings that to any model in Open WebUI.
 
 The model writes one small JSON spec. The tool does the rest on the server — **finds real photos, verifies places on the map
 and draws real street routes** — then renders a polished, theme-aware card inline in the conversation.
@@ -52,8 +52,8 @@ and draws real street routes** — then renders a polished, theme-aware card inl
 
 ## 🚀 Install
 
-1. **Workspace → Tools → +** in Open WebUI, paste [`intelligent_ui.py`](intelligent_ui.py) and save.
-2. **Workspace → Models →** your model **→ Tools:** enable **Intelligent UI**. Turn off other generative-UI tools so the model
+1. **Workspace → Tools → +** in Open WebUI, paste [`frontier_ui.py`](frontier_ui.py) and save.
+2. **Workspace → Models →** your model **→ Tools:** enable **Frontier UI**. Turn off other generative-UI tools so the model
    has one clear choice. Native function calling works best.
 3. Ask for something visual — *“Plan a day in San Francisco”*, *“Good Italian near Union Station under $120 for two”*,
    *“Compare the Arc Pro B70 and RTX 4090 for local LLMs”*.
@@ -87,7 +87,7 @@ Photon / Nominatim, OSRM / FOSSGIS, Open-Meteo and Yahoo Finance; the browser lo
 
 | Method | Use |
 |---|---|
-| `render_intelligent_ui(spec)` | The rich card. |
+| `render_frontier_ui(spec)` | The rich card. |
 | `craft_file(format, card=…)` | Word / PDF / Excel / PowerPoint / CSV from a card (by id) or from Markdown, rows or slides. |
 | `craft_open(url, app)` | Open a photo, PDF, SVG, audio or video in a Craft app on the desktop. |
 | `save_note(card=…)` | Save a card or Markdown to Open WebUI Notes. |
@@ -95,7 +95,7 @@ Photon / Nominatim, OSRM / FOSSGIS, Open-Meteo and Yahoo Finance; the browser lo
 ## 🧩 How it works
 
 ```
-model ──► render_intelligent_ui(spec JSON)
+model ──► render_frontier_ui(spec JSON)
             │
             ├─ photos   ─► Wikipedia + SearXNG   (ranked, deduplicated, cached)
             ├─ places   ─► Wikipedia coords / Photon / Nominatim  (snaps the model's estimate)
@@ -145,7 +145,7 @@ The tool ships as one file, built from readable parts in [`src/`](src): `p1`, `p
 `p3`–`p5` and `p7` the HTML / CSS / JS renderer, `p9` the tool class. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash
-./src/build.sh   # rebuilds intelligent_ui.py
+./src/build.sh   # rebuilds frontier_ui.py
 ```
 
 ## 📝 Notes
@@ -161,7 +161,7 @@ whose map palette and routing approach this follows. Map data © OpenStreetMap c
 
 <div align="center">
 
-**If Intelligent WebUI made your chats nicer, consider buying me a coffee ☕**
+**If Frontier UI made your chats nicer, consider buying me a coffee ☕**
 
 <a href="https://buymeacoffee.com/jumbomuffin777"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="42"></a>
 

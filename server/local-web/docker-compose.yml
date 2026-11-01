@@ -1,7 +1,7 @@
 # Static server for the self-hosted basemap (planet PMTiles + fonts + JS) and the Craft web apps.
 #   ./setup.sh /path/to/big/disk/maps      (downloads JS, fonts, sprites, Craft web apps, and the ~140 GB planet)
 #   LAN_IP=192.168.1.10 MAPS_DIR=/path/to/big/disk/maps docker compose up -d
-# Then set the Intelligent UI valves: tiles_url=http://LAN_IP:18262/maps  craft_web_url=http://LAN_IP:18262/craft
+# Then set the Frontier UI valves: tiles_url=http://LAN_IP:18262/maps  craft_web_url=http://LAN_IP:18262/craft
 name: local-web
 services:
   local-web:

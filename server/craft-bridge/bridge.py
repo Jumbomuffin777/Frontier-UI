@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Zability Craft Bridge - lets Intelligent WebUI create real Office files with the
+"""Zability Craft Bridge - lets Frontier UI create real Office files with the
 Craft CLIs and open them in the streamed Craft desktop. Stdlib only. LAN/internal only.
 
 Endpoints (all but /health need header X-Craft-Token):
@@ -131,7 +131,7 @@ def fetch(url, limit=40 * 1024 * 1024):
                 if not public_url(newurl):
                     raise urllib.error.HTTPError(newurl, 403, "redirect to private address", hdrs, fp)
                 return super().redirect_request(req, fp, code, msg, hdrs, newurl)
-        req = urllib.request.Request(url, headers={"User-Agent": "ZabilityCraftBridge/1.1 (self-hosted Intelligent WebUI)"})
+        req = urllib.request.Request(url, headers={"User-Agent": "ZabilityCraftBridge/1.1 (self-hosted Frontier UI)"})
         with urllib.request.build_opener(Guard).open(req, timeout=8) as r:
             data = r.read(limit + 1)
         return data if len(data) <= limit else None

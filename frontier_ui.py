@@ -1,8 +1,8 @@
 """
-title: Intelligent UI
+title: Frontier UI
 author: Zability (Claude Opus 5.5); inspired by ChatGPT Intelligent UI and thesysdev/open-intelligent-ui (MIT)
-version: 1.1.0
-description: ChatGPT-style Intelligent UI: photo galleries, street maps with multi-day routes (self-hosted planet tiles), filterable place cards, itineraries, budgets, calculators, live weather and quotes, link previews, Gmail drafts, calendar export, and real Word/Excel/PowerPoint/PDF files via the Craft apps.
+version: 1.1.1
+description: ChatGPT-style generative UI: photo galleries, street maps with multi-day routes (self-hosted planet tiles), filterable place cards, itineraries, budgets, calculators, live weather and quotes, link previews, Gmail drafts, calendar export, and real Word/Excel/PowerPoint/PDF files via the Craft apps.
 required_open_webui_version: 0.6.0
 """
 import asyncio
@@ -16,7 +16,7 @@ import aiohttp
 from pydantic import BaseModel, Field
 from starlette.responses import HTMLResponse
 
-UA = {"User-Agent": "intelligent-webui/1.1 (+https://github.com/Jumbomuffin777/Intelligent-webui)"}
+UA = {"User-Agent": "frontier-ui/1.1 (+https://github.com/Jumbomuffin777/Frontier-UI)"}
 _IMG_CACHE: dict = {}
 _GEO_CACHE: dict = {}
 _ROUTE_CACHE: dict = {}
@@ -755,7 +755,7 @@ async def _store_file(user, name, data, mime):
             "OpenWebUI-User-Name": user.get("name", ""), "OpenWebUI-File-Id": fid}
     _contents, path = await asyncio.to_thread(Storage.upload_file, io.BytesIO(data), f"{fid}_{name}", tags)
     res = Files.insert_new_file(user["id"], FileForm(id=fid, filename=name, path=path, data={},
-                                                     meta={"name": name, "content_type": mime, "size": len(data), "source": "intelligent_ui"}))
+                                                     meta={"name": name, "content_type": mime, "size": len(data), "source": "frontier_ui"}))
     if asyncio.iscoroutine(res):
         await res
     return fid, f"/api/v1/files/{fid}/content"
@@ -803,7 +803,7 @@ def _first_photo(it):
 
 
 def _spec_md(spec):
-    L = [f"# {spec.get('title') or 'Intelligent UI'}"]
+    L = [f"# {spec.get('title') or 'Frontier UI'}"]
     if spec.get("subtitle"):
         L.append(f"*{spec['subtitle']}*")
     for b in spec.get("blocks") or []:
@@ -1470,8 +1470,8 @@ function calStamp(w,addMin){if(w.h==null){var dt=new Date(Date.UTC(w.y,w.mo-1,w.
 function events(S){var ev=[];arr(S.events).forEach(function(e){if(!e)return;var s=parseWhen(e.start||e.date,e.time);if(!s)return;var en=e.end?parseWhen(e.end,e.end_time):null;ev.push({title:e.title||S.title,s:s,e:en,dur:num(e.duration_min,60),loc:e.location||'',det:e.details||''});});
  if(!ev.length)arr(S.blocks).forEach(function(b){if(b&&b.type==='timeline')arr(b.items).forEach(function(it){if(!it||!it.date)return;var s=parseWhen(it.date,it.time);if(s)ev.push({title:it.title||'',s:s,e:null,dur:num(it.duration_min,60),loc:it.place||it.location||'',det:it.detail||''});});});return ev;}
 function gcal(e,tz){var st=calStamp(e.s,0),en=e.e?calStamp(e.e,0):calStamp(e.s,e.s.h==null?1:e.dur);return 'https://calendar.google.com/calendar/render?action=TEMPLATE&text='+encodeURIComponent(e.title)+'&dates='+st+'/'+en+(e.s.h!=null&&tz?'&ctz='+encodeURIComponent(tz):'')+(e.loc?'&location='+encodeURIComponent(e.loc):'')+(e.det?'&details='+encodeURIComponent(e.det):'');}
-function ics(evs,tz){var esc=function(s){return String(s||'').replace(/([,;\\])/g,'\\$1').replace(/\n/g,'\\n');};var L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Intelligent WebUI//EN','CALSCALE:GREGORIAN'];
- evs.forEach(function(e,i){var st=calStamp(e.s,0),en=e.e?calStamp(e.e,0):calStamp(e.s,e.s.h==null?1:e.dur);var tzp=e.s.h!=null&&tz?';TZID='+tz:(e.s.h==null?';VALUE=DATE':'');L.push('BEGIN:VEVENT','UID:iui-'+Date.now()+'-'+i+'@intelligent-webui','DTSTAMP:'+new Date().toISOString().replace(/[-:]/g,'').slice(0,15)+'Z','DTSTART'+tzp+':'+st,'DTEND'+tzp+':'+en,'SUMMARY:'+esc(e.title));if(e.loc)L.push('LOCATION:'+esc(e.loc));if(e.det)L.push('DESCRIPTION:'+esc(e.det));L.push('END:VEVENT');});
+function ics(evs,tz){var esc=function(s){return String(s||'').replace(/([,;\\])/g,'\\$1').replace(/\n/g,'\\n');};var L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Frontier UI//EN','CALSCALE:GREGORIAN'];
+ evs.forEach(function(e,i){var st=calStamp(e.s,0),en=e.e?calStamp(e.e,0):calStamp(e.s,e.s.h==null?1:e.dur);var tzp=e.s.h!=null&&tz?';TZID='+tz:(e.s.h==null?';VALUE=DATE':'');L.push('BEGIN:VEVENT','UID:iui-'+Date.now()+'-'+i+'@frontier-ui','DTSTAMP:'+new Date().toISOString().replace(/[-:]/g,'').slice(0,15)+'Z','DTSTART'+tzp+':'+st,'DTEND'+tzp+':'+en,'SUMMARY:'+esc(e.title));if(e.loc)L.push('LOCATION:'+esc(e.loc));if(e.det)L.push('DESCRIPTION:'+esc(e.det));L.push('END:VEVENT');});
  L.push('END:VCALENDAR');return L.join('\r\n');}
 function download(name,text,mime){var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:mime}));a.download=name;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},2000);}
 /* ---------- action bar ---------- */
@@ -1483,10 +1483,10 @@ I.actions=function(S){if(S.actions===false||UI.actions===false)return null;var w
  act('mail','Email',function(){I.openLink(gmailUrl({subject:title,body:cardText(S),to:S.email_to||''}));}).title='Compose in Gmail';
  var ev=events(S);if(ev.length){var cb=act('cal',ev.length>1?'Add to calendar ('+ev.length+')':'Add to calendar',null);if(ev.length===1){cb.onclick=function(){I.openLink(gcal(ev[0],tz));};}
   else{menu(cb,ev.slice(0,12).map(function(e){return [e.title,function(){I.openLink(gcal(e,tz));},e.s.mo+'/'+e.s.d+(e.s.h!=null?' '+pad(e.s.h)+':'+pad(e.s.mi):'')];}).concat([['Download all as .ics',function(){download((title||'events').replace(/[^\w -]+/g,'')+'.ics',ics(ev,tz),'text/calendar');},'Apple/Outlook']]));}}
- var ask=function(fmt,lab,open){I.sendPrompt('Export the Intelligent UI card “'+title+'”'+(id?' (card id: '+id+')':'')+' as a '+lab+' file'+(open?' and open it in the Craft desktop':'')+'.');};
+ var ask=function(fmt,lab,open){I.sendPrompt('Export the Frontier UI card “'+title+'”'+(id?' (card id: '+id+')':'')+' as a '+lab+' file'+(open?' and open it in the Craft desktop':'')+'.');};
  var eb=act('doc','Export',null);eb.appendChild(icon('chev'));
  menu(eb,[['Word document',function(){ask('docx','Word (.docx)');},'.docx · WordCraft'],['PDF',function(){ask('pdf','PDF');},'.pdf'],['Excel spreadsheet',function(){ask('xlsx','Excel (.xlsx)');},'.xlsx · GridCraft'],['PowerPoint deck',function(){ask('pptx','PowerPoint (.pptx)');},'.pptx · DeckCraft'],['Open as a deck in DeckCraft',function(){ask('pptx','PowerPoint (.pptx)',true);},'desktop']]);
- act('note','Save to Notes',function(){I.sendPrompt('Save the Intelligent UI card “'+title+'”'+(id?' (card id: '+id+')':'')+' to my Notes.');});
+ act('note','Save to Notes',function(){I.sendPrompt('Save the Frontier UI card “'+title+'”'+(id?' (card id: '+id+')':'')+' to my Notes.');});
  return w;};
 })();
 </script>
@@ -1700,7 +1700,7 @@ setTimeout(I.reportHeight,50);
 
 
 class Tools:
-    """Intelligent UI: rich, ChatGPT-style visual answers (photos, maps, places, itineraries, charts, live data) plus real
+    """Frontier UI: rich, ChatGPT-style visual answers (photos, maps, places, itineraries, charts, live data) plus real
     Word/Excel/PowerPoint/PDF files made with the Craft apps, Gmail drafts and Open WebUI notes."""
 
     class Valves(BaseModel):
@@ -1738,9 +1738,9 @@ class Tools:
         return HTMLResponse(content=_build_html(spec, theme, self.valves.maplibre_cdn, self.valves.tiles_url), headers={"Content-Disposition": "inline"})
 
     # ---------------- 1. rich card ----------------
-    async def render_intelligent_ui(self, spec: str, __event_emitter__=None, __event_call__=None, __request__=None) -> tuple:
+    async def render_frontier_ui(self, spec: str, __event_emitter__=None, __event_call__=None, __request__=None) -> tuple:
         """
-        Show a rich visual answer (ChatGPT-style Intelligent UI) inside the chat. Use it whenever the answer has places, trips,
+        Show a rich visual answer (ChatGPT-style generative UI) inside the chat. Use it whenever the answer has places, trips,
         itineraries, products, comparisons, numbers, prices, weather, stocks, links, timelines or anything that reads better with
         photos, a map, cards, a table, a chart or a calculator. You write ONE JSON object; the tool finds real photos, geocodes
         places, draws street routes, fetches live weather/quotes/page previews and renders it. Never invent image URLs: give photo
@@ -1783,11 +1783,11 @@ class Tools:
         try:
             data = _loads_lenient(spec)
         except Exception as e:
-            return f"Intelligent UI could not parse spec JSON ({e}). Fix the JSON and call render_intelligent_ui again."
+            return f"Frontier UI could not parse spec JSON ({e}). Fix the JSON and call render_frontier_ui again."
         if isinstance(data, list):
             data = {"blocks": data}
         if not isinstance(data, dict):
-            return "Intelligent UI spec must be a JSON object with a blocks array."
+            return "Frontier UI spec must be a JSON object with a blocks array."
         title = str(data.get("title") or "Response")[:120]
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"Building “{title}”…", "done": False}})
@@ -1813,7 +1813,7 @@ class Tools:
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"Showing “{title}”", "done": True}})
         kinds = [b.get("type") for b in data.get("blocks", []) if isinstance(b, dict)]
-        return resp, (f"Intelligent UI card “{title}” (card id: {card}) is rendered and visible to the user (blocks: {', '.join(map(str, kinds))}). "
+        return resp, (f"Frontier UI card “{title}” (card id: {card}) is rendered and visible to the user (blocks: {', '.join(map(str, kinds))}). "
                       "Reply with one or two short sentences that add context; do not repeat the card or show JSON. "
                       f"If the user later asks to export or save this card, call craft_file or save_note with card=\"{card}\".")
 
@@ -1823,10 +1823,10 @@ class Tools:
         """
         Create a real, downloadable file with the Craft apps (WordCraft / GridCraft / DeckCraft) and show a download card.
         Use it when the user asks for a Word document, PDF, Excel spreadsheet, PowerPoint deck, CSV, or to export / "make a file of"
-        something - including "Export the Intelligent UI card … (card id: X)" requests (then pass card="X" and nothing else).
+        something - including "Export the Frontier UI card … (card id: X)" requests (then pass card="X" and nothing else).
 
         :param format: docx | pdf | odt | rtf | xlsx | csv | pptx  (Word, PDF, Excel, PowerPoint...)
-        :param card: id of an earlier Intelligent UI card to export (content, photos, charts and tables are reused automatically).
+        :param card: id of an earlier Frontier UI card to export (content, photos, charts and tables are reused automatically).
         :param title: file name / document title.
         :param markdown: document body in Markdown (docx/pdf/odt/rtf), or a slide outline for pptx ("# Slide title" + bullets).
         :param rows_json: for xlsx/csv: JSON array of rows, first row = header, e.g. [["Item","Cost"],["Hotel",420]].
@@ -1917,12 +1917,12 @@ class Tools:
     # ---------------- 4. Open WebUI notes ----------------
     async def save_note(self, title: str = "", markdown: str = "", card: str = "", __user__: dict = None, __event_call__=None) -> tuple:
         """
-        Save something to the user's Open WebUI Notes. Use it for "save this", "add to my notes", "Save the Intelligent UI card … to my Notes"
+        Save something to the user's Open WebUI Notes. Use it for "save this", "add to my notes", "Save the Frontier UI card … to my Notes"
         (then pass card="<card id>").
 
         :param title: note title.
         :param markdown: note body in Markdown (optional when card is given).
-        :param card: id of an Intelligent UI card to save.
+        :param card: id of an Frontier UI card to save.
         :return: A card linking to the new note.
         """
         spec = _CARDS.get(str(card).strip()) if card else None

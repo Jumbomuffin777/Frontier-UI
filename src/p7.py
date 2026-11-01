@@ -246,8 +246,8 @@ function calStamp(w,addMin){if(w.h==null){var dt=new Date(Date.UTC(w.y,w.mo-1,w.
 function events(S){var ev=[];arr(S.events).forEach(function(e){if(!e)return;var s=parseWhen(e.start||e.date,e.time);if(!s)return;var en=e.end?parseWhen(e.end,e.end_time):null;ev.push({title:e.title||S.title,s:s,e:en,dur:num(e.duration_min,60),loc:e.location||'',det:e.details||''});});
  if(!ev.length)arr(S.blocks).forEach(function(b){if(b&&b.type==='timeline')arr(b.items).forEach(function(it){if(!it||!it.date)return;var s=parseWhen(it.date,it.time);if(s)ev.push({title:it.title||'',s:s,e:null,dur:num(it.duration_min,60),loc:it.place||it.location||'',det:it.detail||''});});});return ev;}
 function gcal(e,tz){var st=calStamp(e.s,0),en=e.e?calStamp(e.e,0):calStamp(e.s,e.s.h==null?1:e.dur);return 'https://calendar.google.com/calendar/render?action=TEMPLATE&text='+encodeURIComponent(e.title)+'&dates='+st+'/'+en+(e.s.h!=null&&tz?'&ctz='+encodeURIComponent(tz):'')+(e.loc?'&location='+encodeURIComponent(e.loc):'')+(e.det?'&details='+encodeURIComponent(e.det):'');}
-function ics(evs,tz){var esc=function(s){return String(s||'').replace(/([,;\\])/g,'\\$1').replace(/\n/g,'\\n');};var L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Intelligent WebUI//EN','CALSCALE:GREGORIAN'];
- evs.forEach(function(e,i){var st=calStamp(e.s,0),en=e.e?calStamp(e.e,0):calStamp(e.s,e.s.h==null?1:e.dur);var tzp=e.s.h!=null&&tz?';TZID='+tz:(e.s.h==null?';VALUE=DATE':'');L.push('BEGIN:VEVENT','UID:iui-'+Date.now()+'-'+i+'@intelligent-webui','DTSTAMP:'+new Date().toISOString().replace(/[-:]/g,'').slice(0,15)+'Z','DTSTART'+tzp+':'+st,'DTEND'+tzp+':'+en,'SUMMARY:'+esc(e.title));if(e.loc)L.push('LOCATION:'+esc(e.loc));if(e.det)L.push('DESCRIPTION:'+esc(e.det));L.push('END:VEVENT');});
+function ics(evs,tz){var esc=function(s){return String(s||'').replace(/([,;\\])/g,'\\$1').replace(/\n/g,'\\n');};var L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Frontier UI//EN','CALSCALE:GREGORIAN'];
+ evs.forEach(function(e,i){var st=calStamp(e.s,0),en=e.e?calStamp(e.e,0):calStamp(e.s,e.s.h==null?1:e.dur);var tzp=e.s.h!=null&&tz?';TZID='+tz:(e.s.h==null?';VALUE=DATE':'');L.push('BEGIN:VEVENT','UID:iui-'+Date.now()+'-'+i+'@frontier-ui','DTSTAMP:'+new Date().toISOString().replace(/[-:]/g,'').slice(0,15)+'Z','DTSTART'+tzp+':'+st,'DTEND'+tzp+':'+en,'SUMMARY:'+esc(e.title));if(e.loc)L.push('LOCATION:'+esc(e.loc));if(e.det)L.push('DESCRIPTION:'+esc(e.det));L.push('END:VEVENT');});
  L.push('END:VCALENDAR');return L.join('\r\n');}
 function download(name,text,mime){var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:mime}));a.download=name;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},2000);}
 /* ---------- action bar ---------- */
@@ -259,10 +259,10 @@ I.actions=function(S){if(S.actions===false||UI.actions===false)return null;var w
  act('mail','Email',function(){I.openLink(gmailUrl({subject:title,body:cardText(S),to:S.email_to||''}));}).title='Compose in Gmail';
  var ev=events(S);if(ev.length){var cb=act('cal',ev.length>1?'Add to calendar ('+ev.length+')':'Add to calendar',null);if(ev.length===1){cb.onclick=function(){I.openLink(gcal(ev[0],tz));};}
   else{menu(cb,ev.slice(0,12).map(function(e){return [e.title,function(){I.openLink(gcal(e,tz));},e.s.mo+'/'+e.s.d+(e.s.h!=null?' '+pad(e.s.h)+':'+pad(e.s.mi):'')];}).concat([['Download all as .ics',function(){download((title||'events').replace(/[^\w -]+/g,'')+'.ics',ics(ev,tz),'text/calendar');},'Apple/Outlook']]));}}
- var ask=function(fmt,lab,open){I.sendPrompt('Export the Intelligent UI card “'+title+'”'+(id?' (card id: '+id+')':'')+' as a '+lab+' file'+(open?' and open it in the Craft desktop':'')+'.');};
+ var ask=function(fmt,lab,open){I.sendPrompt('Export the Frontier UI card “'+title+'”'+(id?' (card id: '+id+')':'')+' as a '+lab+' file'+(open?' and open it in the Craft desktop':'')+'.');};
  var eb=act('doc','Export',null);eb.appendChild(icon('chev'));
  menu(eb,[['Word document',function(){ask('docx','Word (.docx)');},'.docx · WordCraft'],['PDF',function(){ask('pdf','PDF');},'.pdf'],['Excel spreadsheet',function(){ask('xlsx','Excel (.xlsx)');},'.xlsx · GridCraft'],['PowerPoint deck',function(){ask('pptx','PowerPoint (.pptx)');},'.pptx · DeckCraft'],['Open as a deck in DeckCraft',function(){ask('pptx','PowerPoint (.pptx)',true);},'desktop']]);
- act('note','Save to Notes',function(){I.sendPrompt('Save the Intelligent UI card “'+title+'”'+(id?' (card id: '+id+')':'')+' to my Notes.');});
+ act('note','Save to Notes',function(){I.sendPrompt('Save the Frontier UI card “'+title+'”'+(id?' (card id: '+id+')':'')+' to my Notes.');});
  return w;};
 })();
 </script>

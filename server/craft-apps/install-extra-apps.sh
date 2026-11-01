@@ -1,6 +1,6 @@
 #!/bin/bash
 # Installs the Craft apps that are not in the linuxserver image (WordCraft, GridCraft, DeckCraft, CADCraft, SoundCraft,
-# ArtCraft Launcher) into ./config/apps, adds desktop icons, and starts the Intelligent WebUI Craft bridge on every login.
+# ArtCraft Launcher) into ./config/apps, adds desktop icons, and starts the Frontier UI Craft bridge on every login.
 set -e
 cd "$(dirname "$0")"
 CF=./config
@@ -19,8 +19,8 @@ chmod +x $CF/Desktop/*.desktop
 cp ../craft-bridge/bridge.py $CF/craft-bridge/bridge.py
 AS=$CF/.config/labwc/autostart
 if [ -f $AS ] && ! grep -q craft-bridge $AS; then
-  printf '\n# Intelligent WebUI craft bridge (internal network only)\nnohup /lsiopy/bin/python3 /config/craft-bridge/bridge.py >/config/craft-bridge/bridge.log 2>&1 &\n' >> $AS
+  printf '\n# Frontier UI craft bridge (internal network only)\nnohup /lsiopy/bin/python3 /config/craft-bridge/bridge.py >/config/craft-bridge/bridge.log 2>&1 &\n' >> $AS
 fi
 docker exec -d -u abc -e HOME=/config -w /config craft-apps /lsiopy/bin/python3 /config/craft-bridge/bridge.py
 sleep 2
-echo "Bridge token for the Intelligent UI valve craft_bridge_token is in: $CF/.craft-bridge-token"
+echo "Bridge token for the Frontier UI valve craft_bridge_token is in: $CF/.craft-bridge-token"

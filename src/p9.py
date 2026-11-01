@@ -1,7 +1,7 @@
 
 
 class Tools:
-    """Intelligent UI: rich, ChatGPT-style visual answers (photos, maps, places, itineraries, charts, live data) plus real
+    """Frontier UI: rich, ChatGPT-style visual answers (photos, maps, places, itineraries, charts, live data) plus real
     Word/Excel/PowerPoint/PDF files made with the Craft apps, Gmail drafts and Open WebUI notes."""
 
     class Valves(BaseModel):
@@ -39,9 +39,9 @@ class Tools:
         return HTMLResponse(content=_build_html(spec, theme, self.valves.maplibre_cdn, self.valves.tiles_url), headers={"Content-Disposition": "inline"})
 
     # ---------------- 1. rich card ----------------
-    async def render_intelligent_ui(self, spec: str, __event_emitter__=None, __event_call__=None, __request__=None) -> tuple:
+    async def render_frontier_ui(self, spec: str, __event_emitter__=None, __event_call__=None, __request__=None) -> tuple:
         """
-        Show a rich visual answer (ChatGPT-style Intelligent UI) inside the chat. Use it whenever the answer has places, trips,
+        Show a rich visual answer (ChatGPT-style generative UI) inside the chat. Use it whenever the answer has places, trips,
         itineraries, products, comparisons, numbers, prices, weather, stocks, links, timelines or anything that reads better with
         photos, a map, cards, a table, a chart or a calculator. You write ONE JSON object; the tool finds real photos, geocodes
         places, draws street routes, fetches live weather/quotes/page previews and renders it. Never invent image URLs: give photo
@@ -84,11 +84,11 @@ class Tools:
         try:
             data = _loads_lenient(spec)
         except Exception as e:
-            return f"Intelligent UI could not parse spec JSON ({e}). Fix the JSON and call render_intelligent_ui again."
+            return f"Frontier UI could not parse spec JSON ({e}). Fix the JSON and call render_frontier_ui again."
         if isinstance(data, list):
             data = {"blocks": data}
         if not isinstance(data, dict):
-            return "Intelligent UI spec must be a JSON object with a blocks array."
+            return "Frontier UI spec must be a JSON object with a blocks array."
         title = str(data.get("title") or "Response")[:120]
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"Building “{title}”…", "done": False}})
@@ -114,7 +114,7 @@ class Tools:
         if __event_emitter__:
             await __event_emitter__({"type": "status", "data": {"description": f"Showing “{title}”", "done": True}})
         kinds = [b.get("type") for b in data.get("blocks", []) if isinstance(b, dict)]
-        return resp, (f"Intelligent UI card “{title}” (card id: {card}) is rendered and visible to the user (blocks: {', '.join(map(str, kinds))}). "
+        return resp, (f"Frontier UI card “{title}” (card id: {card}) is rendered and visible to the user (blocks: {', '.join(map(str, kinds))}). "
                       "Reply with one or two short sentences that add context; do not repeat the card or show JSON. "
                       f"If the user later asks to export or save this card, call craft_file or save_note with card=\"{card}\".")
 
@@ -124,10 +124,10 @@ class Tools:
         """
         Create a real, downloadable file with the Craft apps (WordCraft / GridCraft / DeckCraft) and show a download card.
         Use it when the user asks for a Word document, PDF, Excel spreadsheet, PowerPoint deck, CSV, or to export / "make a file of"
-        something - including "Export the Intelligent UI card … (card id: X)" requests (then pass card="X" and nothing else).
+        something - including "Export the Frontier UI card … (card id: X)" requests (then pass card="X" and nothing else).
 
         :param format: docx | pdf | odt | rtf | xlsx | csv | pptx  (Word, PDF, Excel, PowerPoint...)
-        :param card: id of an earlier Intelligent UI card to export (content, photos, charts and tables are reused automatically).
+        :param card: id of an earlier Frontier UI card to export (content, photos, charts and tables are reused automatically).
         :param title: file name / document title.
         :param markdown: document body in Markdown (docx/pdf/odt/rtf), or a slide outline for pptx ("# Slide title" + bullets).
         :param rows_json: for xlsx/csv: JSON array of rows, first row = header, e.g. [["Item","Cost"],["Hotel",420]].
@@ -218,12 +218,12 @@ class Tools:
     # ---------------- 4. Open WebUI notes ----------------
     async def save_note(self, title: str = "", markdown: str = "", card: str = "", __user__: dict = None, __event_call__=None) -> tuple:
         """
-        Save something to the user's Open WebUI Notes. Use it for "save this", "add to my notes", "Save the Intelligent UI card … to my Notes"
+        Save something to the user's Open WebUI Notes. Use it for "save this", "add to my notes", "Save the Frontier UI card … to my Notes"
         (then pass card="<card id>").
 
         :param title: note title.
         :param markdown: note body in Markdown (optional when card is given).
-        :param card: id of an Intelligent UI card to save.
+        :param card: id of an Frontier UI card to save.
         :return: A card linking to the new note.
         """
         spec = _CARDS.get(str(card).strip()) if card else None

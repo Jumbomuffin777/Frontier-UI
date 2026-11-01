@@ -1,4 +1,4 @@
-# Craft apps desktop (linuxserver/craft-apps) + the Intelligent WebUI Craft bridge.
+# Craft apps desktop (linuxserver/craft-apps) + the Frontier UI Craft bridge.
 # LAN ONLY: the desktop has a passwordless-sudo terminal. Never expose these ports to the internet.
 #   1. cp .env.example .env  and set LAN_IP, CUSTOM_USER, PASSWORD
 #   2. docker compose up -d
