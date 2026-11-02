@@ -106,6 +106,8 @@ class Tools:
         Every card gets Copy, Email (Gmail), Export (Word/PDF/Excel/PowerPoint) and Save-to-Notes buttons automatically.
         Rules: concise, scannable copy; real facts only; cite with [n] only when sources are given; trips = images + map + timeline
         (+ budget when costs matter) with timeline "place" values matching map place names exactly.
+        Photo searches: every image needs a short "query" of 2-6 plain words (subject, maybe place) - e.g. "Persian cat",
+        "Norwegian Forest Cat" - never a sentence or a description; "caption" is display text only and is not searched.
 
         :param spec: The spec object described above. Pass it as a JSON object (not a string). Minimal example:
             {"title":"Kyoto day","blocks":[{"type":"text","md":"…"},{"type":"map","places":[{"name":"Kiyomizu-dera","lat":34.995,"lng":135.785},{"name":"Gion","lat":35.004,"lng":135.775}]}],"followups":["Where to eat?"]}

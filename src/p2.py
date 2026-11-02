@@ -8,12 +8,12 @@ async def _resolve(spec, searx, do_images=True, do_maps=True, opts=None):
     """Fill photos, coordinates, street routes, live data and link previews in place. Never raises; failures degrade gracefully."""
     opts = opts or {}
     blocks = spec.get("blocks") if isinstance(spec.get("blocks"), list) else []
-    img_jobs = []  # (target dict, key, query)
+    img_jobs = []  # (target dict, key, query, wiki, fallback)
     live_jobs = []
 
-    def want_img(obj, key, query, wiki=False):
+    def want_img(obj, key, query, wiki=False, fallback=None):
         if do_images and isinstance(obj, dict) and query and not _is_url(obj.get(key)):
-            img_jobs.append((obj, key, str(query), wiki))
+            img_jobs.append((obj, key, str(query), wiki, fallback))
 
     async with aiohttp.ClientSession() as session:
         geo_tasks = []
@@ -29,7 +29,7 @@ async def _resolve(spec, searx, do_images=True, do_maps=True, opts=None):
                     if isinstance(it, str):
                         it = {"query": it}
                     if isinstance(it, dict):
-                        want_img(it, "candidates", it.get("query") or it.get("caption"), True)
+                        want_img(it, "candidates", it.get("query") or it.get("caption"), True, it.get("caption"))
                 b["items"] = [it if isinstance(it, dict) else {"query": it} for it in items]
             elif t in ("places", "cards"):
                 for it in items:
@@ -64,9 +64,10 @@ async def _resolve(spec, searx, do_images=True, do_maps=True, opts=None):
                 b["items"] = [({"url": it} if isinstance(it, str) else it) for it in items if isinstance(it, (dict, str))][:6]
                 live_jobs.append(("links", b))
 
-        async def run_img(obj, key, q, wiki):
+        async def run_img(obj, key, q, wiki, fallback=None):
             try:
-                obj[key] = await asyncio.wait_for(_images_for(session, searx, q, wiki, opts.get("images")), 8)
+                obj[key] = await asyncio.wait_for(
+                    _images_for(session, searx, q, wiki, opts.get("images"), fallback), 8)
             except Exception:
                 obj[key] = []
 
