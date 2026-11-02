@@ -162,6 +162,47 @@ def keys_never_reach_the_html():
         assert k not in html and k not in ctx, k
 
 
+def stub_by_query(hits, calls, delay=None):
+    """Fake _get_json that answers Wikipedia searches by query text: hits = {query: n_results}; delay = {query: s}."""
+    async def fake(session, url, params=None, timeout=6):
+        q = (params or {}).get("gsrsearch", "").replace(" filetype:bitmap", "")
+        calls.append(q)
+        if delay and q in delay:
+            await asyncio.sleep(delay[q])
+        if "wikipedia.org" not in url:
+            raise RuntimeError("404")
+        n = hits.get(q, 0)
+        return {"query": {"pages": [{"index": i, "title": q, "fullurl": f"https://en.wikipedia.org/wiki/{i}",
+                                     "thumbnail": {"source": f"https://upload.wikimedia.org/{q.replace(' ', '_')}/{i}.jpg"}}
+                                    for i in range(n)]}}
+    return fake
+
+
+@test
+def long_gallery_query_tops_up_from_shorter_heads():  # PR #1
+    reset(); calls = Calls()
+    m._get_json = stub_by_query({"Coon cat": 3, "Maine Coon": 2}, calls)
+    out = run(m._images_for(None, "", "brown tabby Maine Coon cat", True, {}, "Maine Coon - classic brown tabby"))
+    assert len(out) >= 3 and all(o.get("fallback") for o in out), out
+
+
+@test
+def place_cards_never_fall_back_to_word_fragments():
+    reset(); calls = Calls()
+    m._get_json = stub_by_query({"Shibuya Tokyo": 5}, calls)
+    out = run(m._images_for(None, "", "Ichiran Ramen Shibuya Tokyo", False, {}))
+    assert out == [] and "Shibuya Tokyo" not in calls, (out, calls)
+
+
+@test
+def slow_fallback_keeps_what_the_query_found():
+    reset(); calls = Calls()
+    m._get_json = stub_by_query({"silver classic tabby Persian cat": 1, "Persian cat": 4}, calls, delay={"Persian cat": 30, "silver classic": 30})
+    t = __import__("time").monotonic()
+    out = run(asyncio.wait_for(m._images_for(None, "", "silver classic tabby Persian cat", True, {}), 8))
+    assert len(out) == 1 and __import__("time").monotonic() - t < 8, out
+
+
 # ---------------- User 1: units ----------------
 @test
 def units_default_auto_and_user_override():

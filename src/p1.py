@@ -1,7 +1,7 @@
-﻿"""
+"""
 title: Frontier UI
 author: Zability (Claude Opus 5.5); inspired by ChatGPT Intelligent UI and thesysdev/open-intelligent-ui (MIT)
-version: 1.3.0
+version: 1.3.1
 description: ChatGPT-style generative UI: photo galleries, street maps with multi-day routes (self-hosted planet tiles), filterable place cards, itineraries, budgets, calculators, live weather and quotes, link previews, Gmail drafts, calendar export, real Word/Excel/PowerPoint/PDF files, and reading + editing your uploaded files with all 16 ArtCraft apps.
 required_open_webui_version: 0.6.0
 """
@@ -168,17 +168,21 @@ def _provider_up(name):
     return time.time() - _DOWN.get(name, 0) > 300
 
 
-async def _images_for(session, searx, q, wiki=True, cfg=None, fallback=None):
+FALLBACK_DEADLINE = 6.5  # seconds into a photo lookup after which no fallback starts (run_img gives up at 8 s)
+
+
+async def _images_for(session, searx, q, wiki=True, cfg=None, fallback=None, _depth=0):
     """Photo candidates from a fallback chain that works with no services and no keys:
     SearXNG (if reachable) + optional keyed providers, then Wikipedia + Wikimedia Commons, then Openverse.
     `cfg` = {"provider": "auto"|name, "brave_key", "google_key", "google_cx", "pexels_key", "unsplash_key"}.
-    `fallback` = a second string (usually the caption) to try, shortened, when the query finds nothing."""
+    `fallback` = a second string (usually the caption) to try, shortened, when the query finds fewer than 3 photos."""
+    t0 = time.monotonic()
     cfg = cfg or {}
     q = re.sub(r"\s+", " ", str(q or "")).strip()[:160]
     if len(q) < 2:
         return []
     want = cfg.get("provider") or "auto"
-    ck = (q, want, bool(searx))
+    ck = (q, want, bool(searx), bool(wiki), str(fallback or "")[:80] if _depth == 0 else "")
     if ck in _IMG_CACHE:
         return _IMG_CACHE[ck]
     p = {}
@@ -203,45 +207,70 @@ async def _images_for(session, searx, q, wiki=True, cfg=None, fallback=None):
         tiers = [web + (["wikipedia", "commons"] if wiki or not web else []), ["wikipedia", "commons"] if web and not wiki else [],
                  ["openverse"] + [n for n in ("pexels", "unsplash") if n in p]]
     seen, out = set(), []
-    for tier in tiers:
-        tier = [n for n in dict.fromkeys(tier) if n in p and _provider_up(n) and n not in seen]
-        if not tier or len(out) >= 3:
-            continue
-        res = await asyncio.gather(*(p[n]() for n in tier), return_exceptions=True)
-        for n, group in zip(tier, res):
-            seen.add(n)
-            if isinstance(group, Exception):
-                if n in ("searxng", "brave", "google", "pexels", "unsplash"):
-                    _DOWN[n] = time.time()
+
+    async def run_tiers(tier_list):
+        for tier in tier_list:
+            tier = [n for n in dict.fromkeys(tier) if n in p and _provider_up(n) and n not in seen]
+            if not tier or len(out) >= 3:
                 continue
-            for it in group:
-                if it.get("src") and it["src"] not in {o["src"] for o in out}:
-                    it.setdefault("provider", n)
-                    out.append(it)
+            res = await asyncio.gather(*(p[n]() for n in tier), return_exceptions=True)
+            for n, group in zip(tier, res):
+                seen.add(n)
+                if isinstance(group, Exception):
+                    if n in ("searxng", "brave", "google", "pexels", "unsplash"):
+                        _DOWN[n] = time.time()
+                    continue
+                for it in group:
+                    if it.get("src") and it["src"] not in {o["src"] for o in out}:
+                        it.setdefault("provider", n)
+                        out.append(it)
+
+    # fast sources first (web search, Wikipedia, Commons); the slow tail (Openverse, stock APIs) runs below, alongside
+    # the shorter fallback searches, so neither waits for the other inside the 8 s photo budget
+    await run_tiers(tiers[:2])
+    slow = None
+    if len(out) < 3 and not _depth and any(tiers[2:]):
+        slow = asyncio.ensure_future(run_tiers(tiers[2:]))
+    budget = FALLBACK_DEADLINE - (time.monotonic() - t0)
+    if len(out) < 3 and _depth == 0 and budget > 0.5:
+        # a long or adjective-heavy query ("brown tabby Maine Coon cat") matches little or nothing: top up from
+        # shorter heads, since the title-match gate scores overlap against the whole query (PR #1, ondrejch).
+        # Caption/query head before a dash: always. First/last two words: only for gallery and hero photos (wiki=True);
+        # for a place card "Ichiran Ramen Shibuya Tokyo" -> "Shibuya Tokyo" would show the district, not the restaurant.
+        words = q.split()
+        heads = []
+        for s in (fallback, q):
+            s = re.sub(r"\s+", " ", str(s or "")).strip()
+            heads.append(re.split(r"\s+[—–·|]\s+|\s+-\s+|[,(]", s)[0].strip() if s else "")
+        # most specific first; broad ones (a single word like "Persian", or leading adjectives like "silver classic")
+        # only fill gaps, because "Persian" alone finds the Persian Gulf as readily as the cat
+        strong = ([" ".join(words[-2:])] if wiki and len(words) > 3 else []) + [h for h in heads if len(h.split()) >= 2]
+        weak = [h for h in heads if len(h.split()) == 1] + ([" ".join(words[:2])] if wiki and len(words) > 3 else [])
+        alts = [a for a in dict.fromkeys(strong + weak) if a and a != q and len(a) >= 2][:4]
+        weak = set(weak) - set(strong)
+        if alts:
+            # in parallel and inside what is left of the photo budget: a slow fallback must never cost the photos the
+            # original query already found (run_img's 8 s timeout would otherwise discard everything)
+            tasks = [asyncio.ensure_future(_images_for(session, searx, a, wiki, cfg, _depth=1)) for a in alts]
+            done, pending = await asyncio.wait(tasks, timeout=budget)
+            for t in pending:
+                t.cancel()
+            if pending:  # let the cancellations finish so no request is left dangling
+                await asyncio.gather(*pending, return_exceptions=True)
+            for a, t in zip(alts, tasks):  # in priority order; broad alternatives only while photos are still missing
+                if t not in done or t.cancelled() or t.exception() or (a in weak and len(out) >= 3):
+                    continue
+                for it in t.result() or []:
+                    if it.get("src") and it["src"] not in {o["src"] for o in out}:
+                        out.append(dict(it, fallback=a))
+    if slow is not None:  # the slow tier: only worth waiting for while photos are still missing, and never past the budget
+        if len(out) < 3:
+            await asyncio.wait([slow], timeout=max(0.1, FALLBACK_DEADLINE - (time.monotonic() - t0)))
+        if not slow.done():
+            slow.cancel()
+            await asyncio.gather(slow, return_exceptions=True)
     # photos first: transparent PNG cut-outs look empty as tiles, keep them as late fallbacks
     out = sorted(out, key=lambda it: 1 if re.search(r"\.png(\?|$)", it["src"], re.I) else 0)[:8]
-    if len(out) < 3:
-        # a long or adjective-heavy query ("brown tabby Maine Coon cat") matches little or nothing: top up from
-        # shorter heads - caption before the dash, the first or last two words - since the title-match gate
-        # scores overlap against the whole query, so more words make a match harder
-        alts = []
-        for s in (q, fallback):
-            s = re.sub(r"\s+", " ", str(s or "")).strip()
-            head = re.split(r"\s+[—–·|]\s+|\s+-\s+|[,(]", s)[0].strip() if s else ""
-            alts.append(head)
-        words = q.split()
-        if len(words) > 3:
-            alts.append(" ".join(words[:2]))
-            alts.append(" ".join(words[-2:]))
-        for a in dict.fromkeys(a for a in alts if a and a != q and len(a) >= 2):
-            got = await _images_for(session, searx, a, wiki, cfg)
-            for it in got or []:
-                if it.get("src") and it["src"] not in {o["src"] for o in out}:
-                    it.setdefault("provider", "fallback")
-                    out.append(it)
-            if len(out) >= 8:
-                break
-        out = sorted(out, key=lambda it: 1 if re.search(r"\.png(\?|$)", it["src"], re.I) else 0)[:8]
     if out:
         _cache_put(_IMG_CACHE, ck, out)
     return out

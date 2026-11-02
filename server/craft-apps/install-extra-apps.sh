@@ -1,6 +1,7 @@
 #!/bin/bash
 # Installs the Craft apps that are not in the linuxserver image (WordCraft, GridCraft, DeckCraft, CADCraft, SoundCraft,
-# TextureCraft, ArtCraft Launcher) into ./config/apps, adds desktop icons, and starts the Frontier UI Craft bridge on every login.
+# TextureCraft, ArtCraft Launcher) into ./config/apps, adds desktop icons, and installs the Frontier UI Craft bridge,
+# which then starts with the container (an s6 service from docker-compose.yml) - no manual docker exec after restarts.
 set -e
 cd "$(dirname "$0")"
 CF=./config
@@ -18,10 +19,12 @@ d=json.load(sys.stdin); print(next(a["browser_download_url"] for a in d["assets"
 done
 chmod +x $CF/Desktop/*.desktop
 cp ../craft-bridge/bridge.py $CF/craft-bridge/bridge.py
-AS=$CF/.config/labwc/autostart
-if [ -f $AS ] && ! grep -q craft-bridge $AS; then
-  printf '\n# Frontier UI craft bridge (internal network only)\nnohup /lsiopy/bin/python3 /config/craft-bridge/bridge.py >/config/craft-bridge/bridge.log 2>&1 &\n' >> $AS
+# The bridge runs as an s6 service defined in docker-compose.yml (configs: craft-bridge-service): it starts with the
+# container and restarts if it stops. Containers created from an older compose file get it after a one-time recreate.
+if ! docker exec craft-apps test -x /custom-services.d/craft-bridge 2>/dev/null; then
+  echo "Recreating the container so it picks up the bridge service (one-time)..."; docker compose up -d --force-recreate
 fi
-docker exec -d -u abc -e HOME=/config -w /config craft-apps /lsiopy/bin/python3 /config/craft-bridge/bridge.py
-sleep 2
+sleep 8
+docker exec craft-apps sh -c 'ps -eo args | grep -q "[c]raft-bridge/bridge.py"' && echo "Craft bridge is running." \
+  || echo "Bridge not running yet: check 'docker logs craft-apps'."
 echo "Bridge token for the Frontier UI valve craft_bridge_token is in: $CF/.craft-bridge-token"

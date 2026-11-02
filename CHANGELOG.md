@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.3.1 — 2026-11-02
+**Photos for long queries, a self-starting Craft bridge, Apple Silicon.** Thanks to
+[@ondrejch](https://github.com/ondrejch) for PR #1 and to u/PersonalCitron2328 for the Mac report.
+
+- **Photos for long or descriptive queries** (PR #1 by @ondrejch): "brown tabby Maine Coon cat" used to come back empty
+  because the Wikipedia/Commons matcher scores title overlap against the whole query. When a query finds fewer than three
+  photos it now tops up from shorter heads (the caption before a dash, the last/first two words). Photos load eagerly,
+  the tool asks the model for 2-6 word photo queries, and `build.sh` strips a leading BOM per part (which also fixes the
+  BOM handling in the spec parser that 1.3.0's build broke).
+- Follow-ups to PR #1: the shorter searches run in parallel inside what is left of the 8 s photo budget, and whatever the
+  original query found is always kept, so a slow fallback can't blank a tile. Word-fragment fallbacks are only used for
+  gallery and hero photos - place cards don't get a photo of "Shibuya Tokyo" for "Ichiran Ramen Shibuya Tokyo".
+- **Craft bridge starts with the container**: it now runs as an s6 service defined inline in
+  `server/craft-apps/docker-compose.yml` (no more `docker exec ... bridge.py` after every restart, and s6 restarts it if it
+  stops). Existing installs: update the compose file and run `docker compose up -d`; the old desktop-autostart line can go.
+- **Apple Silicon / ARM hosts**: `platform: linux/amd64` in the Craft compose file (the image is x86-64 only).
+- Maps: route lines are re-added whenever the map settles, so they survive a basemap fallback (self-hosted ->
+  OpenFreeMap -> raster) or a theme switch; previously that could leave pins without a line.
+- Craft bridge: new `/cli` endpoint so agents can run any app's command line in a scratch folder (token-protected,
+  no absolute paths, no servers or code execution).
+- Tests: long-query top-up, place cards without fragment fallbacks, slow fallback keeps the original photos.
+
 ## 1.3.0 — 2026-11-01
 **Works out of the box with no SearXNG and no keys, metric/imperial, reliable routes and links, TextureCraft.**
 

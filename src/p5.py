@@ -114,6 +114,9 @@ function mapBlock(b){
   function showRoutes(){LINES.forEach(function(L){var v=(!curDay||L.day===curDay)?'visible':'none';[L.id,L.id+'-case'].forEach(function(id){if(map.getLayer(id))map.setLayoutProperty(id,'visibility',v);});});}
   map.on('styledata',function(){if(map.isStyleLoaded()){clearTimeout(failT);addRoutes();}});
   map.on('load',addRoutes);
+  /* setStyle (basemap fallback local -> OpenFreeMap -> raster, or a theme switch) drops custom layers, and 'styledata'
+     can fire before isStyleLoaded() is true: re-check whenever the map settles (addRoutes is idempotent) */
+  map.on('idle',function(){if(LINES.length&&map.isStyleLoaded()&&!map.getLayer(LINES[0].id))addRoutes();});
   var mk=[];var dayIdx={};
   places.forEach(function(p,i){var el=h('div','pin');var n=p.day?(dayIdx[p.day]=(dayIdx[p.day]||0)+1):i+1;var dot=txt('div','dot',p.icon||String(n));var lab=txt('div','lab',p.name||'');
    var dc=dayColor(p.day);if(dc){dot.style.borderColor=dc;dot.style.boxShadow='0 0 0 2px '+dc+'55';}el.appendChild(dot);el.appendChild(lab);

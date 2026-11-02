@@ -107,7 +107,7 @@ Interactive maps need WebGL; without it (blocklisted GPU, hardened Firefox profi
 | Add-on | What you get | How |
 |---|---|---|
 | **Planet basemap** | Maps served from your own box — no tile API to break. ~140 GB; an HDD is fine. | [`server/local-web/setup.sh`](server/local-web/setup.sh) downloads the Protomaps planet, fonts and JS; nginx serves them with range requests. |
-| **Craft desktop + bridge** | `craft_file` makes real `.docx/.xlsx/.pptx/.pdf` with WordCraft · GridCraft · DeckCraft, reads, edits and converts files with all 16 ArtCraft apps, and takes page screenshots. | [`server/craft-apps`](server/craft-apps) — `linuxserver/craft-apps` plus [`bridge.py`](server/craft-bridge/bridge.py). **LAN only.** |
+| **Craft desktop + bridge** | `craft_file` makes real `.docx/.xlsx/.pptx/.pdf` with WordCraft · GridCraft · DeckCraft, reads, edits and converts files with all 16 ArtCraft apps, and takes page screenshots. | [`server/craft-apps`](server/craft-apps) — `linuxserver/craft-apps` plus [`bridge.py`](server/craft-bridge/bridge.py), which starts with the container. Works on Apple Silicon via emulation. **LAN only.** |
 | **Craft web apps** | All 16 apps + the ArtCraft Launcher as static web apps for the `apps` block. | Same `setup.sh`, served under `/craft/`. |
 
 ### 🧰 Tool methods

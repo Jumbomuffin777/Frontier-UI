@@ -10,6 +10,8 @@ Endpoints (all but /health need header X-Craft-Token):
   POST /edit     {name, b64, commands:[{command, params}], out?, app?, extra?}  -> edited file
   POST /convert  {name, b64, format}                    -> converted file
   POST /commands {app, search?}                         -> the app's command catalogue (filtered)
+  POST /cli      {app, args:[...], files:{name: b64}, timeout?, inbox?}  -> run <app>-cli in a scratch folder:
+                 {exit_code, stdout, stderr, files:{name: b64} (new or changed files)}
 """
 import base64, hmac, json, os, re, shutil, subprocess, tempfile, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,7 +21,7 @@ INBOX = os.path.join(HOME, "Inbox")
 APPS_DIR = os.path.join(HOME, "apps")
 TOKEN_FILE = os.path.join(HOME, ".craft-bridge-token")
 PORT = int(os.environ.get("CRAFT_BRIDGE_PORT", "8790"))
-MAX_BODY = 60 * 1024 * 1024
+MAX_BODY = 400 * 1024 * 1024
 LOCK = threading.Lock()
 WORK = threading.Semaphore(2)
 
@@ -602,6 +604,88 @@ def list_commands(d):
     return {"app": app, "commands": text[:14000]}
 
 
+CLI_DENY_SUB = {"mcp", "serve", "app", "setup", "uninstall", "plugin", "connect", "ui", "send", "zotero", "ai", "crashes",
+                "bench-assistant", "fuzz", "oracle", "snapshot-ui", "engines_install", "settings_set", "plugins_install",
+                "doctor", "rebuild"}
+CLI_DENY_FLAG = ("--connect", "--bridge", "--allow-run", "--allow-any-path", "--allow-path", "--control", "--automation-",
+                 "--read-root", "--write-root", "--root", "--library", "--token", "--port")
+CLI_MAX_OUT = 200 * 1024 * 1024
+
+
+def run_cli(d):
+    """Run one app CLI in a fresh scratch folder with the given files staged; return stdout and every new or changed file.
+    Agents (e.g. Hermes) get the whole CLI surface of the 16 apps without a shell: no absolute paths, no '..',
+    no servers/bridges/AI backends, nothing that escapes the scratch folder."""
+    app = str(d.get("app") or "")
+    if app not in APPS or app == "artcraft-launcher":
+        raise ValueError("app must be one of " + ", ".join(a for a in APPS if a != "artcraft-launcher"))
+    exe = binary(app, True)
+    if not exe:
+        raise RuntimeError(f"{app}-cli is not installed")
+    args = [str(a) for a in (d.get("args") or [])]
+    if not args:
+        raise ValueError("args is empty; e.g. [\"--help\"] or [\"commands\"]")
+    for a in args:
+        if a.startswith("/") or re.search(r"(^|[\\/=])\.\.([\\/]|$)", a) or "~" in a[:2]:
+            raise ValueError(f"argument {a!r}: use file names relative to the job folder (no absolute paths or '..')")
+        if a.split("=")[0].startswith(CLI_DENY_FLAG):
+            raise ValueError(f"argument {a!r} is not allowed through the bridge")
+    sub = next((a for a in args if a in CLI_DENY_SUB or a.replace("-", "_") in CLI_DENY_SUB), "")
+    if sub:
+        raise ValueError(f"'{sub}' is not available through the bridge")
+    timeout = max(10, min(int(d.get("timeout") or 300), 1200))
+    files = d.get("files") or {}
+    with tempfile.TemporaryDirectory(prefix="cli-") as tmp:
+        before = {}
+        for name, b64 in files.items():
+            rel = os.path.normpath(str(name)).lstrip("/\\")
+            if rel.startswith("..") or os.path.isabs(rel):
+                raise ValueError(f"bad file name {name!r}")
+            p = os.path.join(tmp, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            raw = base64.b64decode(b64 or "")
+            if len(raw) < 4_000_000 and re.search(rb'["\'=\s](/config|/etc|/root|/proc|/lsiopy|/home|/run)(/|["\'\s])', raw[:4_000_000]) \
+                    and rel.rsplit(".", 1)[-1].lower() in ("json", "jsonl", "txt", "sc", "jsx", "js", "lua", "py", "sh", "yml", "yaml", "md"):
+                raise ValueError(f"{name}: scripts may only use paths inside the job folder")
+            open(p, "wb").write(raw)
+            before[rel] = os.path.getmtime(p)
+        if app == "craft-anything":  # its tools insist on absolute paths: point staged names at the job folder
+            args = [os.path.join(tmp, a) if a in before else a for a in args]
+        env = dict(os.environ)
+        env.update({"HOME": HOME, "XDG_RUNTIME_DIR": os.path.join(HOME, ".XDG"), "NO_COLOR": "1"})
+        t0 = time.time()
+        try:
+            r = subprocess.run([exe] + args, cwd=tmp, capture_output=True, timeout=timeout, env=env,
+                               stdin=subprocess.DEVNULL)
+            code, out, err = r.returncode, r.stdout, r.stderr
+        except subprocess.TimeoutExpired as e:
+            code, out, err = -9, e.stdout or b"", (e.stderr or b"") + f"\n[timed out after {timeout}s]".encode()
+        res = {"app": app, "exit_code": code, "ms": int((time.time() - t0) * 1000),
+               "stdout": out.decode("utf-8", "replace")[-2_000_000:], "stderr": err.decode("utf-8", "replace")[-8000:], "files": {}}
+        total = 0
+        for root, _, names in os.walk(tmp):
+            for n in names:
+                p = os.path.join(root, n)
+                rel = os.path.relpath(p, tmp)
+                if os.path.islink(p) or (rel in before and os.path.getmtime(p) == before[rel]):
+                    continue
+                size = os.path.getsize(p)
+                total += size
+                if total > CLI_MAX_OUT:
+                    res["truncated"] = "outputs over 200 MB were left out"
+                    break
+                res["files"][rel] = base64.b64encode(open(p, "rb").read()).decode()
+        if d.get("inbox") and res["files"]:  # also drop results on the Craft desktop (Inbox/<folder>) to open by hand
+            dest = os.path.join(INBOX, re.sub(r"[^A-Za-z0-9 ._-]+", "", str(d.get("inbox_folder") or "Hermes"))[:40] or "Hermes")
+            os.makedirs(dest, exist_ok=True)
+            res["inbox"] = []
+            for rel, b64 in res["files"].items():
+                p = unique(os.path.join(dest, os.path.basename(rel)))
+                open(p, "wb").write(base64.b64decode(b64))
+                res["inbox"].append(p)
+        return res
+
+
 def launch(app, path=None):
     exe = binary(app)
     if not exe:
@@ -660,6 +744,9 @@ class H(BaseHTTPRequestHandler):
                     return self._send(200, {"/inspect": inspect_file, "/edit": edit_file, "/convert": convert_file}[p](d))
             if p == "/commands":
                 return self._send(200, list_commands(d))
+            if p == "/cli":
+                with WORK:
+                    return self._send(200, run_cli(d))
             if p == "/screenshot":
                 img = screenshot(str(d.get("url", "")))
                 return self._send(200, {"mime": "image/jpeg", "b64": base64.b64encode(img).decode(), "size": len(img)})
@@ -732,6 +819,7 @@ if __name__ == "__main__":
     token()
     try:
         srv = ThreadingHTTPServer(("0.0.0.0", PORT), H)
-    except OSError:
-        raise SystemExit(0)  # already running
+    except OSError:  # already running (e.g. started by hand): wait before exiting so s6 doesn't restart-loop
+        time.sleep(60)
+        raise SystemExit(0)
     srv.serve_forever()

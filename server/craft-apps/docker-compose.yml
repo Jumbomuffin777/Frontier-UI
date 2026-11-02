@@ -7,6 +7,7 @@ name: craft-apps
 services:
   craft-apps:
     image: lscr.io/linuxserver/craft-apps:latest
+    platform: linux/amd64        # the image is x86-64 only; Apple Silicon / ARM hosts run it under emulation (Rosetta)
     container_name: craft-apps
     restart: unless-stopped
     shm_size: "1gb"
@@ -20,6 +21,9 @@ services:
     # environment: ["DRINODE=/dev/dri/renderD128"]
     volumes:
       - ./config:/config
+    configs:                     # the Craft bridge as an s6 service: starts with the container and restarts if it stops
+      - source: craft-bridge-service
+        target: /custom-services.d/craft-bridge
     ports:
       - "${LAN_IP}:18260:3001"   # https desktop
       - "${LAN_IP}:18261:3000"   # http desktop
@@ -28,3 +32,16 @@ networks:
   openwebui:
     external: true
     name: ${OPENWEBUI_NETWORK:-open-webui_default}
+configs:
+  # Inline (Docker Compose 2.23+): copied in root-owned and executable (0755) on any host, macOS included - linuxserver
+  # images only run custom services owned by root, which a bind-mounted file often isn't. "$$" is a literal "$".
+  craft-bridge-service:
+    content: |
+      #!/usr/bin/with-contenv bash
+      BRIDGE=/config/craft-bridge/bridge.py
+      if [ ! -f "$$BRIDGE" ]; then
+        echo "[craft-bridge] $$BRIDGE not found yet (run install-extra-apps.sh); retrying in 60 s"
+        exec sleep 60
+      fi
+      cd /config
+      exec s6-setuidgid abc env HOME=/config /lsiopy/bin/python3 "$$BRIDGE"
