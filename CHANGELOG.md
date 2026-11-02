@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Tool results now carry the card's computed facts** — map routes (distance/duration, per-day for
+  multi-day trips), geocoded pin coordinates, the current weather reading with forecast range, stock
+  quotes with 1D/1M/1Y change, and link-preview successes/failures are appended to the
+  `render_frontier_ui` tool result, so the model can answer follow-ups without re-fetching.
+  Regression tests added.
+
 ## 1.3.1 — 2026-11-02
 **Photos for long queries, a self-starting Craft bridge, Apple Silicon.** Thanks to
 [@ondrejch](https://github.com/ondrejch) for PR #1 and to u/PersonalCitron2328 for the Mac report.
