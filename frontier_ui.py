@@ -168,10 +168,11 @@ def _provider_up(name):
     return time.time() - _DOWN.get(name, 0) > 300
 
 
-async def _images_for(session, searx, q, wiki=True, cfg=None):
+async def _images_for(session, searx, q, wiki=True, cfg=None, fallback=None):
     """Photo candidates from a fallback chain that works with no services and no keys:
     SearXNG (if reachable) + optional keyed providers, then Wikipedia + Wikimedia Commons, then Openverse.
-    `cfg` = {"provider": "auto"|name, "brave_key", "google_key", "google_cx", "pexels_key", "unsplash_key"}."""
+    `cfg` = {"provider": "auto"|name, "brave_key", "google_key", "google_cx", "pexels_key", "unsplash_key"}.
+    `fallback` = a second string (usually the caption) to try, shortened, when the query finds nothing."""
     cfg = cfg or {}
     q = re.sub(r"\s+", " ", str(q or "")).strip()[:160]
     if len(q) < 2:
@@ -219,6 +220,28 @@ async def _images_for(session, searx, q, wiki=True, cfg=None):
                     out.append(it)
     # photos first: transparent PNG cut-outs look empty as tiles, keep them as late fallbacks
     out = sorted(out, key=lambda it: 1 if re.search(r"\.png(\?|$)", it["src"], re.I) else 0)[:8]
+    if len(out) < 3:
+        # a long or adjective-heavy query ("brown tabby Maine Coon cat") matches little or nothing: top up from
+        # shorter heads - caption before the dash, the first or last two words - since the title-match gate
+        # scores overlap against the whole query, so more words make a match harder
+        alts = []
+        for s in (q, fallback):
+            s = re.sub(r"\s+", " ", str(s or "")).strip()
+            head = re.split(r"\s+[—–·|]\s+|\s+-\s+|[,(]", s)[0].strip() if s else ""
+            alts.append(head)
+        words = q.split()
+        if len(words) > 3:
+            alts.append(" ".join(words[:2]))
+            alts.append(" ".join(words[-2:]))
+        for a in dict.fromkeys(a for a in alts if a and a != q and len(a) >= 2):
+            got = await _images_for(session, searx, a, wiki, cfg)
+            for it in got or []:
+                if it.get("src") and it["src"] not in {o["src"] for o in out}:
+                    it.setdefault("provider", "fallback")
+                    out.append(it)
+            if len(out) >= 8:
+                break
+        out = sorted(out, key=lambda it: 1 if re.search(r"\.png(\?|$)", it["src"], re.I) else 0)[:8]
     if out:
         _cache_put(_IMG_CACHE, ck, out)
     return out
@@ -377,7 +400,7 @@ def _loads_lenient(spec, _depth=0):
     anything else raises SpecError with the position and a snippet so the model can fix its JSON."""
     if isinstance(spec, (dict, list)):
         return spec
-    s = str(spec or "").strip().lstrip("")
+    s = str(spec or "").strip().lstrip("﻿")
     if not s:
         raise SpecError("spec is empty. Pass one JSON object like {\"title\": \"…\", \"blocks\": [{\"type\": \"text\", \"md\": \"…\"}]}.")
     s = re.sub(r"^```[a-zA-Z]*\s*|\s*```\s*$", "", s)  # code fences
@@ -502,12 +525,12 @@ async def _resolve(spec, searx, do_images=True, do_maps=True, opts=None):
     """Fill photos, coordinates, street routes, live data and link previews in place. Never raises; failures degrade gracefully."""
     opts = opts or {}
     blocks = spec.get("blocks") if isinstance(spec.get("blocks"), list) else []
-    img_jobs = []  # (target dict, key, query)
+    img_jobs = []  # (target dict, key, query, wiki, fallback)
     live_jobs = []
 
-    def want_img(obj, key, query, wiki=False):
+    def want_img(obj, key, query, wiki=False, fallback=None):
         if do_images and isinstance(obj, dict) and query and not _is_url(obj.get(key)):
-            img_jobs.append((obj, key, str(query), wiki))
+            img_jobs.append((obj, key, str(query), wiki, fallback))
 
     async with aiohttp.ClientSession() as session:
         geo_tasks = []
@@ -523,7 +546,7 @@ async def _resolve(spec, searx, do_images=True, do_maps=True, opts=None):
                     if isinstance(it, str):
                         it = {"query": it}
                     if isinstance(it, dict):
-                        want_img(it, "candidates", it.get("query") or it.get("caption"), True)
+                        want_img(it, "candidates", it.get("query") or it.get("caption"), True, it.get("caption"))
                 b["items"] = [it if isinstance(it, dict) else {"query": it} for it in items]
             elif t in ("places", "cards"):
                 for it in items:
@@ -558,9 +581,10 @@ async def _resolve(spec, searx, do_images=True, do_maps=True, opts=None):
                 b["items"] = [({"url": it} if isinstance(it, str) else it) for it in items if isinstance(it, (dict, str))][:6]
                 live_jobs.append(("links", b))
 
-        async def run_img(obj, key, q, wiki):
+        async def run_img(obj, key, q, wiki, fallback=None):
             try:
-                obj[key] = await asyncio.wait_for(_images_for(session, searx, q, wiki, opts.get("images")), 8)
+                obj[key] = await asyncio.wait_for(
+                    _images_for(session, searx, q, wiki, opts.get("images"), fallback), 8)
             except Exception:
                 obj[key] = []
 
@@ -1577,7 +1601,7 @@ function photo(item,cls,opts){
  var cap=(item&&(item.caption||item.name||item.title||item.query))||'';
  function miss(){box.classList.add('miss');if(opts.noText){var m=txt('span','mi',(item&&item.icon)||String(cap||'?').trim().charAt(0).toUpperCase());box.textContent='';box.appendChild(m);}else{box.textContent=cap;}}
  if(!c.length){miss();return box;}
- var sh=h('div','shimmer');box.appendChild(sh);var img=document.createElement('img');img.alt=cap;img.loading='lazy';img.referrerPolicy='no-referrer';var i=0;
+ var sh=h('div','shimmer');box.appendChild(sh);var img=document.createElement('img');img.alt=cap;img.loading='eager';img.referrerPolicy='no-referrer';var i=0;
  function next(){if(i>=c.length){img.remove();sh.remove();miss();return;}img.src=c[i++].src;}
  img.onload=function(){if(img.naturalWidth<140&&i<c.length){next();return;}img.classList.add('ok');sh.remove();var cc=c[i-1]||{};box.dataset.page=cc.page||'';box.dataset.credit=cc.credit||'';if(cc.credit)img.title=cc.credit;};
  img.onerror=next;next();box.appendChild(img);
@@ -2258,6 +2282,8 @@ class Tools:
         Every card gets Copy, Email (Gmail), Export (Word/PDF/Excel/PowerPoint) and Save-to-Notes buttons automatically.
         Rules: concise, scannable copy; real facts only; cite with [n] only when sources are given; trips = images + map + timeline
         (+ budget when costs matter) with timeline "place" values matching map place names exactly.
+        Photo searches: every image needs a short "query" of 2-6 plain words (subject, maybe place) - e.g. "Persian cat",
+        "Norwegian Forest Cat" - never a sentence or a description; "caption" is display text only and is not searched.
 
         :param spec: The spec object described above. Pass it as a JSON object (not a string). Minimal example:
             {"title":"Kyoto day","blocks":[{"type":"text","md":"…"},{"type":"map","places":[{"name":"Kiyomizu-dera","lat":34.995,"lng":135.785},{"name":"Gion","lat":35.004,"lng":135.775}]}],"followups":["Where to eat?"]}

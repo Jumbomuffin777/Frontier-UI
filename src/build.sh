@@ -6,5 +6,7 @@
 #   p9      the Tools class (valves and the four tool methods)
 set -e
 cd "$(dirname "$0")"
-cat p1.py p2.py p6.py p3.py p4.py p4b.py p7.py p5.py p9.py | tr -d '\r' > ../frontier_ui.py
+for f in p1.py p2.py p6.py p3.py p4.py p4b.py p7.py p5.py p9.py; do
+    sed -e '1s/^\xef\xbb\xbf//' "$f" | tr -d '\r'
+done > ../frontier_ui.py
 python3 -m py_compile ../frontier_ui.py && echo "built ../frontier_ui.py"

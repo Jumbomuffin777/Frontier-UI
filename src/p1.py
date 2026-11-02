@@ -168,10 +168,11 @@ def _provider_up(name):
     return time.time() - _DOWN.get(name, 0) > 300
 
 
-async def _images_for(session, searx, q, wiki=True, cfg=None):
+async def _images_for(session, searx, q, wiki=True, cfg=None, fallback=None):
     """Photo candidates from a fallback chain that works with no services and no keys:
     SearXNG (if reachable) + optional keyed providers, then Wikipedia + Wikimedia Commons, then Openverse.
-    `cfg` = {"provider": "auto"|name, "brave_key", "google_key", "google_cx", "pexels_key", "unsplash_key"}."""
+    `cfg` = {"provider": "auto"|name, "brave_key", "google_key", "google_cx", "pexels_key", "unsplash_key"}.
+    `fallback` = a second string (usually the caption) to try, shortened, when the query finds nothing."""
     cfg = cfg or {}
     q = re.sub(r"\s+", " ", str(q or "")).strip()[:160]
     if len(q) < 2:
@@ -219,6 +220,28 @@ async def _images_for(session, searx, q, wiki=True, cfg=None):
                     out.append(it)
     # photos first: transparent PNG cut-outs look empty as tiles, keep them as late fallbacks
     out = sorted(out, key=lambda it: 1 if re.search(r"\.png(\?|$)", it["src"], re.I) else 0)[:8]
+    if len(out) < 3:
+        # a long or adjective-heavy query ("brown tabby Maine Coon cat") matches little or nothing: top up from
+        # shorter heads - caption before the dash, the first or last two words - since the title-match gate
+        # scores overlap against the whole query, so more words make a match harder
+        alts = []
+        for s in (q, fallback):
+            s = re.sub(r"\s+", " ", str(s or "")).strip()
+            head = re.split(r"\s+[—–·|]\s+|\s+-\s+|[,(]", s)[0].strip() if s else ""
+            alts.append(head)
+        words = q.split()
+        if len(words) > 3:
+            alts.append(" ".join(words[:2]))
+            alts.append(" ".join(words[-2:]))
+        for a in dict.fromkeys(a for a in alts if a and a != q and len(a) >= 2):
+            got = await _images_for(session, searx, a, wiki, cfg)
+            for it in got or []:
+                if it.get("src") and it["src"] not in {o["src"] for o in out}:
+                    it.setdefault("provider", "fallback")
+                    out.append(it)
+            if len(out) >= 8:
+                break
+        out = sorted(out, key=lambda it: 1 if re.search(r"\.png(\?|$)", it["src"], re.I) else 0)[:8]
     if out:
         _cache_put(_IMG_CACHE, ck, out)
     return out
