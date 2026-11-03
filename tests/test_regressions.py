@@ -468,6 +468,42 @@ def failed_live_data_adds_no_feedback():
         m._weather = orig
 
 
+@test
+def tool_result_never_states_missing_weather():
+    reset()
+    orig = m._weather
+
+    async def partial(session, b, unit):
+        return {"label": "Oslo", "unit": "°C", "now": {"text": "Rain"}, "daily": [{"hi": 7, "lo": 2}]}
+
+    m._weather = partial
+    try:
+        t = m.Tools()
+        resp, ctx = run(t.render_frontier_ui({"title": "w", "blocks": [{"type": "weather", "location": "Oslo"}]}))
+        assert "None" not in ctx, ctx
+        assert "weather (Oslo): now" not in ctx and "weather (Oslo): 1d hi 7°C/lo 2°C" in ctx, ctx
+    finally:
+        m._weather = orig
+
+
+@test
+def tool_result_notes_are_bounded():
+    reset()
+    orig = m._weather
+
+    async def wordy(session, b, unit):
+        return {"label": "x" * 5000, "unit": "°C", "now": {"t": 1}, "daily": [{"hi": 7, "lo": 2}]}
+
+    m._weather = wordy
+    try:
+        t = m.Tools()
+        resp, ctx = run(t.render_frontier_ui({"title": "w", "blocks": [{"type": "weather", "location": "Oslo"}]}))
+        assert len(ctx) < 1800, len(ctx)
+        assert "…" in ctx, ctx
+    finally:
+        m._weather = orig
+
+
 if __name__ == "__main__":
     real_get, real_keyed = m._get_json, m._keyed_json
     failed = 0

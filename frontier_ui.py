@@ -1,7 +1,7 @@
 """
 title: Frontier UI
 author: Zability (Claude Opus 5.5); inspired by ChatGPT Intelligent UI and thesysdev/open-intelligent-ui (MIT)
-version: 1.3.1
+version: 1.3.2
 description: ChatGPT-style generative UI: photo galleries, street maps with multi-day routes (self-hosted planet tiles), filterable place cards, itineraries, budgets, calculators, live weather and quotes, link previews, Gmail drafts, calendar export, real Word/Excel/PowerPoint/PDF files, and reading + editing your uploaded files with all 16 ArtCraft apps.
 required_open_webui_version: 0.6.0
 """
@@ -2352,6 +2352,9 @@ class Tools:
             await __event_emitter__({"type": "status", "data": {"description": f"Showing “{title}”", "done": True}})
         kinds = [b.get("type") for b in data.get("blocks", []) if isinstance(b, dict)]
         extra = [f"route: {b['route_status']}" for b in data.get("blocks", []) if isinstance(b, dict) and b.get("route_status")]
+        def route_fact(label, r):
+            m = r.get("min")
+            return f"{label} ({r.get('mode', '?')}): {r['km']:.1f} km" + (f", ~{int(round(m))} min" if isinstance(m, (int, float)) else "")
         for b in data.get("blocks", []):
             if not isinstance(b, dict):
                 continue
@@ -2359,11 +2362,12 @@ class Tools:
             if t == "map":
                 r = b.get("route_geo")
                 if isinstance(r, dict) and r.get("km") is not None:
-                    extra.insert(0, f"route ({r.get('mode', '?')}): {r['km']:.1f} km, ~{int(round(r.get('min', 0)))} min")
-                for d, rr in (b.get("day_routes") or {}).items():
-                    if isinstance(rr, dict) and rr.get("km") is not None:
-                        extra.append(f"route {d} ({rr.get('mode', '?')}): {rr['km']:.1f} km, ~{int(round(rr.get('min', 0)))} min")
-                pinned = [f"{p.get('name', '?')} ({p['lat']:.3f},{p['lng']:.3f})" for p in b.get("places", []) if isinstance(p, dict) and p.get("lat") is not None]
+                    extra.insert(0, route_fact("route", r))
+                days = [route_fact(f"route {d}", rr) for d, rr in (b.get("day_routes") or {}).items() if isinstance(rr, dict) and rr.get("km") is not None]
+                extra.extend(days[:10])
+                if len(days) > 10:
+                    extra.append(f"+{len(days) - 10} more day routes")
+                pinned = [f"{str(p.get('name', '?'))[:60]} ({p['lat']:.3f},{p['lng']:.3f})" for p in b.get("places", []) if isinstance(p, dict) and p.get("lat") is not None and p.get("lng") is not None]
                 if pinned:
                     extra.append("pinned: " + "; ".join(pinned[:12]))
             elif t == "weather":
@@ -2373,8 +2377,16 @@ class Tools:
                     now = w.get("now") or {}
                     his = [x["hi"] for x in w["daily"] if x.get("hi") is not None]
                     los = [x["lo"] for x in w["daily"] if x.get("lo") is not None]
-                    rng = f"; {len(w['daily'])}d hi {max(his)}{u}/lo {min(los)}{u}" if his and los else ""
-                    extra.append(f"weather ({w.get('label', '?')}): now {now.get('t')}{u} {now.get('text', '')}, feels {now.get('feels')}{u}, wind {now.get('wind')} {w.get('wind_unit', '')}{rng}")
+                    rng = f"{len(w['daily'])}d hi {max(his)}{u}/lo {min(los)}{u}" if his and los else ""
+                    cur = []
+                    if now.get("t") is not None:
+                        cur.append(f"now {now['t']}{u} {now.get('text', '')}".rstrip())
+                    if now.get("feels") is not None:
+                        cur.append(f"feels {now['feels']}{u}")
+                    if now.get("wind") is not None:
+                        cur.append(f"wind {now['wind']} {w.get('wind_unit', '')}".rstrip())
+                    if cur or rng:
+                        extra.append(f"weather ({w.get('label', '?')}): " + "; ".join(x for x in (", ".join(cur), rng) if x))
             elif t == "stock":
                 qs = [q for q in (b.get("quotes") or []) if isinstance(q, dict)]
                 ok, errs = [], []
@@ -2404,8 +2416,11 @@ class Tools:
                     extra.append("preview failures: " + "; ".join(errs[:4]))
         if notes:
             extra.append("spec fixes applied: " + "; ".join(notes[:6]))
+        joined = " | ".join(extra)
+        if len(joined) > 1200:
+            joined = joined[:1200].rstrip() + "…"
         return resp, (f"Frontier UI card “{title}” (card id: {card}) is rendered and visible to the user (blocks: {', '.join(map(str, kinds))}). "
-                      + ("Notes: " + " | ".join(extra) + ". " if extra else "") +
+                      + ("Notes: " + joined + ". " if extra else "") +
                       "Reply with one or two short sentences that add context; do not repeat the card or show JSON. "
                       f"If the user later asks to export or save this card, call craft_file or save_note with card=\"{card}\".")
 
