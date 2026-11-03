@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.2 — 2026-11-02
+**Your model now knows what the card worked out.** Thanks to [@Mumtasim](https://github.com/Mumtasim) for PR #2.
+
+- **Tool results carry the card's computed facts** (PR #2 by @Mumtasim): map routes (distance and duration, per day on
+  multi-day trips), pin coordinates, current weather with the forecast range, stock quotes with 1D/1M/1Y change, and
+  link-preview successes and failures are added to the `render_frontier_ui` tool result, so follow-up questions can be
+  answered without fetching again.
+- Follow-up: only values that actually came back are stated (no `None°C`, no `~0 min` for a missing duration), pin names
+  are shortened, long trips list ten day routes, and the notes stay within a fixed budget so a card can't flood the
+  model's context. Regression tests added.
+
 ## 1.3.1 — 2026-11-02
 **Photos for long queries, a self-starting Craft bridge, Apple Silicon.** Thanks to
 [@ondrejch](https://github.com/ondrejch) for PR #1 and to u/PersonalCitron2328 for the Mac report.

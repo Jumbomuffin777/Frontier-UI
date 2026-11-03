@@ -381,6 +381,129 @@ def texturecraft_registered():
     assert m.CRAFT_EXT["stl"] == "solidcraft"
 
 
+# ---------------- Tool-result feedback ----------------
+@test
+def tool_result_carries_map_route_facts():
+    reset(); calls = Calls()
+    m._get_json = stub_get_json({"routing.openstreetmap.de": OSRM_OK, "router.project-osrm.org": OSRM_OK}, calls)
+    t = m.Tools()
+    resp, ctx = run(t.render_frontier_ui(map_spec()))
+    assert "route (walk): 1.8 km, ~25 min" in ctx, ctx
+    assert "pinned: Kiyomizu-dera (34.995,135.785); Gion (35.004,135.775)" in ctx, ctx
+
+
+@test
+def tool_result_carries_weather_headline():
+    reset()
+    wx = {"label": "Ljubljana, Slovenia", "unit": "°C", "wind_unit": "km/h",
+          "now": {"t": 21.4, "feels": 20.1, "wind": 9, "text": "Sunny"},
+          "daily": [{"hi": 24, "lo": 12}, {"hi": 22, "lo": 11}]}
+    orig = m._weather
+
+    async def fake(session, b, unit):
+        return wx
+
+    m._weather = fake
+    try:
+        t = m.Tools()
+        resp, ctx = run(t.render_frontier_ui({"title": "w", "blocks": [{"type": "weather", "location": "Ljubljana"}]}))
+        assert "weather (Ljubljana, Slovenia): now 21.4°C Sunny, feels 20.1°C, wind 9 km/h; 2d hi 24°C/lo 11°C" in ctx, ctx
+    finally:
+        m._weather = orig
+
+
+@test
+def tool_result_carries_quote_facts():
+    reset()
+    q = {"symbol": "AAPL", "name": "Apple Inc.", "price": 232.14, "prev": 231.2, "currency": "USD",
+         "series": {"1D": [[1, 231.0], [2, 232.14]], "1M": [[1, 228.0], [2, 232.14]], "1Y": [[1, 195.0], [2, 232.14]]}}
+    orig = m._quote
+
+    async def fake(session, sym):
+        return dict(q)
+
+    m._quote = fake
+    try:
+        t = m.Tools()
+        resp, ctx = run(t.render_frontier_ui({"title": "s", "blocks": [{"type": "stock", "symbols": ["AAPL"]}]}))
+        assert "quotes: AAPL 232.14 USD (+0.4% 1D, +1.8% 1M, +19.0% 1Y)" in ctx, ctx
+    finally:
+        m._quote = orig
+
+
+@test
+def tool_result_reports_link_preview_status():
+    reset()
+    orig = m._preview
+
+    async def fake(session, it, bridge):
+        if "good" in str(it.get("url")):
+            it["title"] = "Good Page"
+
+    m._preview = fake
+    try:
+        t = m.Tools()
+        resp, ctx = run(t.render_frontier_ui({"title": "l", "blocks": [{"type": "links", "items": [
+            {"url": "https://good.example/a"}, {"url": "https://bad.example/b"}]}]}))
+        assert "previews: 1 ok (Good Page)" in ctx, ctx
+        assert "preview failures: https://bad.example/b" in ctx, ctx
+    finally:
+        m._preview = orig
+
+
+@test
+def failed_live_data_adds_no_feedback():
+    reset()
+    orig = m._weather
+
+    async def boom(session, b, unit):
+        raise RuntimeError("place not found")
+
+    m._weather = boom
+    try:
+        t = m.Tools()
+        resp, ctx = run(t.render_frontier_ui({"title": "f", "blocks": [{"type": "weather", "location": "Nowhere"}]}))
+        assert "weather (" not in ctx, ctx
+    finally:
+        m._weather = orig
+
+
+@test
+def tool_result_never_states_missing_weather():
+    reset()
+    orig = m._weather
+
+    async def partial(session, b, unit):
+        return {"label": "Oslo", "unit": "°C", "now": {"text": "Rain"}, "daily": [{"hi": 7, "lo": 2}]}
+
+    m._weather = partial
+    try:
+        t = m.Tools()
+        resp, ctx = run(t.render_frontier_ui({"title": "w", "blocks": [{"type": "weather", "location": "Oslo"}]}))
+        assert "None" not in ctx, ctx
+        assert "weather (Oslo): now" not in ctx and "weather (Oslo): 1d hi 7°C/lo 2°C" in ctx, ctx
+    finally:
+        m._weather = orig
+
+
+@test
+def tool_result_notes_are_bounded():
+    reset()
+    orig = m._weather
+
+    async def wordy(session, b, unit):
+        return {"label": "x" * 5000, "unit": "°C", "now": {"t": 1}, "daily": [{"hi": 7, "lo": 2}]}
+
+    m._weather = wordy
+    try:
+        t = m.Tools()
+        resp, ctx = run(t.render_frontier_ui({"title": "w", "blocks": [{"type": "weather", "location": "Oslo"}]}))
+        assert len(ctx) < 1800, len(ctx)
+        assert "…" in ctx, ctx
+    finally:
+        m._weather = orig
+
+
 if __name__ == "__main__":
     real_get, real_keyed = m._get_json, m._keyed_json
     failed = 0

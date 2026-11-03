@@ -144,10 +144,75 @@ class Tools:
             await __event_emitter__({"type": "status", "data": {"description": f"Showing “{title}”", "done": True}})
         kinds = [b.get("type") for b in data.get("blocks", []) if isinstance(b, dict)]
         extra = [f"route: {b['route_status']}" for b in data.get("blocks", []) if isinstance(b, dict) and b.get("route_status")]
+        def route_fact(label, r):
+            m = r.get("min")
+            return f"{label} ({r.get('mode', '?')}): {r['km']:.1f} km" + (f", ~{int(round(m))} min" if isinstance(m, (int, float)) else "")
+        for b in data.get("blocks", []):
+            if not isinstance(b, dict):
+                continue
+            t = b.get("type")
+            if t == "map":
+                r = b.get("route_geo")
+                if isinstance(r, dict) and r.get("km") is not None:
+                    extra.insert(0, route_fact("route", r))
+                days = [route_fact(f"route {d}", rr) for d, rr in (b.get("day_routes") or {}).items() if isinstance(rr, dict) and rr.get("km") is not None]
+                extra.extend(days[:10])
+                if len(days) > 10:
+                    extra.append(f"+{len(days) - 10} more day routes")
+                pinned = [f"{str(p.get('name', '?'))[:60]} ({p['lat']:.3f},{p['lng']:.3f})" for p in b.get("places", []) if isinstance(p, dict) and p.get("lat") is not None and p.get("lng") is not None]
+                if pinned:
+                    extra.append("pinned: " + "; ".join(pinned[:12]))
+            elif t == "weather":
+                w = b.get("weather")
+                if isinstance(w, dict) and w.get("daily"):
+                    u = w.get("unit", "°C")
+                    now = w.get("now") or {}
+                    his = [x["hi"] for x in w["daily"] if x.get("hi") is not None]
+                    los = [x["lo"] for x in w["daily"] if x.get("lo") is not None]
+                    rng = f"{len(w['daily'])}d hi {max(his)}{u}/lo {min(los)}{u}" if his and los else ""
+                    cur = []
+                    if now.get("t") is not None:
+                        cur.append(f"now {now['t']}{u} {now.get('text', '')}".rstrip())
+                    if now.get("feels") is not None:
+                        cur.append(f"feels {now['feels']}{u}")
+                    if now.get("wind") is not None:
+                        cur.append(f"wind {now['wind']} {w.get('wind_unit', '')}".rstrip())
+                    if cur or rng:
+                        extra.append(f"weather ({w.get('label', '?')}): " + "; ".join(x for x in (", ".join(cur), rng) if x))
+            elif t == "stock":
+                qs = [q for q in (b.get("quotes") or []) if isinstance(q, dict)]
+                ok, errs = [], []
+                for q in qs:
+                    p, prev = q.get("price"), q.get("prev")
+                    if isinstance(p, (int, float)) and isinstance(prev, (int, float)) and prev:
+                        parts = [f"{(p - prev) / prev * 100:+.1f}% 1D"]
+                        s = q.get("series") or {}
+                        for k in ("1M", "1Y"):
+                            pts = s.get(k) or []
+                            if len(pts) >= 2 and pts[0][1]:
+                                parts.append(f"{(pts[-1][1] - pts[0][1]) / pts[0][1] * 100:+.1f}% {k}")
+                        ok.append(f"{q.get('symbol', '?')} {p}{(' ' + q['currency']) if q.get('currency') else ''} ({', '.join(parts)})")
+                    else:
+                        errs.append(f"{q.get('symbol', '?')} ({str(q.get('error', 'no price'))[:40]})")
+                if ok:
+                    extra.append("quotes: " + ", ".join(ok[:6]))
+                if errs:
+                    extra.append("quote errors: " + ", ".join(errs[:6]))
+            elif t == "links":
+                items = [i for i in (b.get("items") or []) if isinstance(i, dict)]
+                ok = [str(i.get("title") or "?")[:60] for i in items if i.get("title")]
+                errs = [str(i.get("url") or "?")[:60] for i in items if not i.get("title")]
+                if ok:
+                    extra.append(f"previews: {len(ok)} ok (" + "; ".join(ok[:4]) + (", …)" if len(ok) > 4 else "") + ")")
+                if errs:
+                    extra.append("preview failures: " + "; ".join(errs[:4]))
         if notes:
             extra.append("spec fixes applied: " + "; ".join(notes[:6]))
+        joined = " | ".join(extra)
+        if len(joined) > 1200:
+            joined = joined[:1200].rstrip() + "…"
         return resp, (f"Frontier UI card “{title}” (card id: {card}) is rendered and visible to the user (blocks: {', '.join(map(str, kinds))}). "
-                      + ("Notes: " + " | ".join(extra) + ". " if extra else "") +
+                      + ("Notes: " + joined + ". " if extra else "") +
                       "Reply with one or two short sentences that add context; do not repeat the card or show JSON. "
                       f"If the user later asks to export or save this card, call craft_file or save_note with card=\"{card}\".")
 
