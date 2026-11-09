@@ -1,7 +1,7 @@
 """
 title: Frontier UI
 author: Zability (Claude Opus 5.5); inspired by ChatGPT Intelligent UI and thesysdev/open-intelligent-ui (MIT)
-version: 1.3.2
+version: 1.3.3
 description: ChatGPT-style generative UI: photo galleries, street maps with multi-day routes (self-hosted planet tiles), filterable place cards, itineraries, budgets, calculators, live weather and quotes, link previews, Gmail drafts, calendar export, real Word/Excel/PowerPoint/PDF files, and reading + editing your uploaded files with all 16 ArtCraft apps.
 required_open_webui_version: 0.6.0
 """
@@ -36,22 +36,54 @@ def _words(text):
 
 
 _SEMS: dict = {}
+_COOLDOWN: dict = {}  # provider -> time.time() until which it is not asked again (Retry-After, 429, 503)
+
+
+def _provider_key(host):
+    """Wikipedia and Commons are one provider (Wikimedia): they share one queue and one cooldown."""
+    return "wikimedia" if host.endswith(("wikipedia.org", "wikimedia.org")) else host
+
+
+def _retry_after(value):
+    """Seconds from a Retry-After header (delta-seconds or an HTTP date); None when absent or unreadable."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        return max(0.0, parsedate_to_datetime(value).timestamp() - time.time())
+    except Exception:
+        return None
 
 
 async def _get_json(session, url, params=None, timeout=6):
-    """GET JSON with per-host politeness: Wikimedia gets 3 concurrent requests and backs off on 429."""
+    """GET JSON politely. Wikimedia's APIs are asked one request at a time; any provider that answers 429/503 is left
+    alone for its Retry-After (or a short default), shared by every card and gallery, instead of being retried in a burst."""
     host = url.split("/")[2]
-    limit = 3 if "wiki" in host else 6
+    key = _provider_key(host)
+    limit = 1 if key == "wikimedia" else 6
     loop = asyncio.get_running_loop()
-    sem = _SEMS.get((host, id(loop)))
+    sem = _SEMS.get((key, id(loop)))
     if sem is None:
-        sem = _SEMS[(host, id(loop))] = asyncio.Semaphore(limit)
-    for attempt in range(3):
+        sem = _SEMS[(key, id(loop))] = asyncio.Semaphore(limit)
+    for attempt in range(2):
+        wait = _COOLDOWN.get(key, 0) - time.time()
+        if wait > 1.5:
+            raise RuntimeError(f"{host} cooling down")
+        if wait > 0:
+            await asyncio.sleep(wait)
         async with sem:
             async with session.get(url, params=params, headers=UA, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
-                if r.status == 429 and attempt < 2:
-                    await asyncio.sleep(0.5 * (attempt + 1))
-                    continue
+                if r.status in (429, 503):
+                    ra = _retry_after(r.headers.get("Retry-After"))
+                    pause = min(300.0, ra if ra is not None else 2.0 * (attempt + 1))
+                    _COOLDOWN[key] = max(_COOLDOWN.get(key, 0), time.time() + pause)
+                    if attempt == 0 and pause <= 1.5:
+                        continue
+                    raise RuntimeError(f"{url} {r.status}")
                 if r.status != 200:
                     raise RuntimeError(f"{url} {r.status}")
                 return await r.json(content_type=None)
@@ -169,14 +201,15 @@ def _provider_up(name):
 
 
 FALLBACK_DEADLINE = 6.5  # seconds into a photo lookup after which no fallback starts (run_img gives up at 8 s)
+REQUESTS_PER_IMAGE = 10  # provider requests one photo slot may make, its shorter fallback searches included
+EMPTY_TTL = 120  # seconds an empty answer is remembered, so a gallery doesn't ask again for what just found nothing
+_IMG_EMPTY: dict = {}
+_INFLIGHT: dict = {}
 
 
-async def _images_for(session, searx, q, wiki=True, cfg=None, fallback=None, _depth=0):
-    """Photo candidates from a fallback chain that works with no services and no keys:
-    SearXNG (if reachable) + optional keyed providers, then Wikipedia + Wikimedia Commons, then Openverse.
-    `cfg` = {"provider": "auto"|name, "brave_key", "google_key", "google_cx", "pexels_key", "unsplash_key"}.
-    `fallback` = a second string (usually the caption) to try, shortened, when the query finds fewer than 3 photos."""
-    t0 = time.monotonic()
+async def _images_for(session, searx, q, wiki=True, cfg=None, fallback=None, _depth=0, _budget=None):
+    """Cached front of _lookup_images: the same search running for two tiles is asked once, and an empty answer is
+    remembered for EMPTY_TTL seconds."""
     cfg = cfg or {}
     q = re.sub(r"\s+", " ", str(q or "")).strip()[:160]
     if len(q) < 2:
@@ -185,6 +218,37 @@ async def _images_for(session, searx, q, wiki=True, cfg=None, fallback=None, _de
     ck = (q, want, bool(searx), bool(wiki), str(fallback or "")[:80] if _depth == 0 else "")
     if ck in _IMG_CACHE:
         return _IMG_CACHE[ck]
+    if time.time() - _IMG_EMPTY.get(ck, 0) < EMPTY_TTL:
+        return []
+    fk = (ck, id(asyncio.get_running_loop()))
+    running = _INFLIGHT.get(fk)
+    if running is not None:
+        try:
+            return list(await asyncio.shield(running))
+        except (asyncio.CancelledError, Exception):
+            return []
+    task = asyncio.ensure_future(_lookup_images(session, searx, q, wiki, cfg, fallback, _depth, _budget))
+    _INFLIGHT[fk] = task
+    try:
+        out = await task
+    finally:
+        if _INFLIGHT.get(fk) is task:
+            _INFLIGHT.pop(fk, None)
+    if out:
+        _cache_put(_IMG_CACHE, ck, out)
+    else:
+        _cache_put(_IMG_EMPTY, ck, time.time())
+    return out
+
+
+async def _lookup_images(session, searx, q, wiki, cfg, fallback, _depth, _budget):
+    """Photo candidates from a fallback chain that works with no services and no keys:
+    SearXNG (if reachable) + optional keyed providers, then Wikipedia + Wikimedia Commons, then Openverse.
+    `cfg` = {"provider": "auto"|name, "brave_key", "google_key", "google_cx", "pexels_key", "unsplash_key"}.
+    `fallback` = a second string (usually the caption) to try, shortened, when the query finds fewer than 3 photos."""
+    t0 = time.monotonic()
+    want = cfg.get("provider") or "auto"
+    budget_left = _budget if _budget is not None else {"n": REQUESTS_PER_IMAGE}
     p = {}
     if searx:
         p["searxng"] = lambda: _searx_images(session, searx, q)
@@ -210,9 +274,10 @@ async def _images_for(session, searx, q, wiki=True, cfg=None, fallback=None, _de
 
     async def run_tiers(tier_list):
         for tier in tier_list:
-            tier = [n for n in dict.fromkeys(tier) if n in p and _provider_up(n) and n not in seen]
+            tier = [n for n in dict.fromkeys(tier) if n in p and _provider_up(n) and n not in seen][:max(0, budget_left["n"])]
             if not tier or len(out) >= 3:
                 continue
+            budget_left["n"] -= len(tier)
             res = await asyncio.gather(*(p[n]() for n in tier), return_exceptions=True)
             for n, group in zip(tier, res):
                 seen.add(n)
@@ -249,18 +314,20 @@ async def _images_for(session, searx, q, wiki=True, cfg=None, fallback=None, _de
         alts = [a for a in dict.fromkeys(strong + weak) if a and a != q and len(a) >= 2][:4]
         weak = set(weak) - set(strong)
         if alts:
-            # in parallel and inside what is left of the photo budget: a slow fallback must never cost the photos the
-            # original query already found (run_img's 8 s timeout would otherwise discard everything)
-            tasks = [asyncio.ensure_future(_images_for(session, searx, a, wiki, cfg, _depth=1)) for a in alts]
-            done, pending = await asyncio.wait(tasks, timeout=budget)
-            for t in pending:
-                t.cancel()
-            if pending:  # let the cancellations finish so no request is left dangling
-                await asyncio.gather(*pending, return_exceptions=True)
-            for a, t in zip(alts, tasks):  # in priority order; broad alternatives only while photos are still missing
-                if t not in done or t.cancelled() or t.exception() or (a in weak and len(out) >= 3):
+            # one at a time, most specific first, and only while photos are missing: parallel fallbacks sent bursts
+            # to the same providers. Each gets what is left of the photo budget, so a slow one can't cost the photos
+            # the original query already found (run_img's 8 s timeout would otherwise discard everything)
+            for a in alts:
+                left = FALLBACK_DEADLINE - (time.monotonic() - t0)
+                if len(out) >= 3 or left <= 0.3 or budget_left["n"] <= 0:
+                    break
+                try:
+                    got = await asyncio.wait_for(_images_for(session, searx, a, wiki, cfg, _depth=1, _budget=budget_left), left)
+                except asyncio.TimeoutError:
+                    break
+                except Exception:
                     continue
-                for it in t.result() or []:
+                for it in got or []:
                     if it.get("src") and it["src"] not in {o["src"] for o in out}:
                         out.append(dict(it, fallback=a))
     if slow is not None:  # the slow tier: only worth waiting for while photos are still missing, and never past the budget
@@ -270,10 +337,7 @@ async def _images_for(session, searx, q, wiki=True, cfg=None, fallback=None, _de
             slow.cancel()
             await asyncio.gather(slow, return_exceptions=True)
     # photos first: transparent PNG cut-outs look empty as tiles, keep them as late fallbacks
-    out = sorted(out, key=lambda it: 1 if re.search(r"\.png(\?|$)", it["src"], re.I) else 0)[:8]
-    if out:
-        _cache_put(_IMG_CACHE, ck, out)
-    return out
+    return sorted(out, key=lambda it: 1 if re.search(r"\.png(\?|$)", it["src"], re.I) else 0)[:8]
 
 
 _PHOTON_SEM = None

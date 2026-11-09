@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.3 — 2026-11-09
+**Gentler on the free photo services.** Thanks to [@nnraiden](https://github.com/nnraiden) for issue #3.
+
+- **Retry-After is honoured** (issue #3 by @nnraiden): when Wikimedia, Openverse or another provider answers 429 or
+  503, it is left alone for the time it asks (or a short default), and that cooldown is shared by every card and
+  gallery instead of being retried in a burst.
+- **Wikimedia is asked one request at a time**: Wikipedia and Commons share one queue and one cooldown.
+- **Shorter fallback searches run one after another**, most specific first, and stop as soon as the photo has
+  enough candidates; each photo makes at most 10 provider requests, fallbacks included.
+- **Repeated searches are asked once**: two tiles searching for the same thing share one lookup, and an empty answer is
+  remembered for two minutes.
+- Regression tests for all of the above; the keyless defaults are unchanged.
+
 ## 1.3.2 — 2026-11-02
 **Your model now knows what the card worked out.** Thanks to [@Mumtasim](https://github.com/Mumtasim) for PR #2.
 

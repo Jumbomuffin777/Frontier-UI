@@ -26,6 +26,7 @@ def test(fn):
 
 def reset():
     m._IMG_CACHE.clear(); m._ROUTE_CACHE.clear(); m._DOWN.clear(); m._GEO_CACHE.clear()
+    m._IMG_EMPTY.clear(); m._INFLIGHT.clear(); m._COOLDOWN.clear()
 
 
 WIKI_PAGE = {"query": {"pages": [{"index": 1, "title": "Kiyomizu-dera", "fullurl": "https://en.wikipedia.org/wiki/Kiyomizu-dera",
@@ -201,6 +202,74 @@ def slow_fallback_keeps_what_the_query_found():
     t = __import__("time").monotonic()
     out = run(asyncio.wait_for(m._images_for(None, "", "silver classic tabby Persian cat", True, {}), 8))
     assert len(out) == 1 and __import__("time").monotonic() - t < 8, out
+
+
+# ---------------- Issue #3 (@nnraiden): request bursts and provider cooldowns ----------------
+class FakeResp:
+    def __init__(self, status, headers=None, body=None):
+        self.status, self.headers, self.body = status, headers or {}, body or {}
+    async def __aenter__(self): return self
+    async def __aexit__(self, *a): return False
+    async def json(self, content_type=None): return self.body
+
+
+class FakeSession:
+    def __init__(self, answer):
+        self.answer, self.urls = answer, []
+    def get(self, url, **kw):
+        self.urls.append(url)
+        return self.answer(url)
+
+
+@test
+def retry_after_is_honoured_and_shared_across_wikimedia():
+    reset()
+    s = FakeSession(lambda url: FakeResp(429, {"Retry-After": "30"}))
+    for url in ("https://commons.wikimedia.org/w/api.php", "https://en.wikipedia.org/w/api.php"):
+        try:
+            run(m._get_json(s, url, {}))
+            raise AssertionError("should raise")
+        except RuntimeError:
+            pass
+    assert len(s.urls) == 1, s.urls  # Wikipedia is not asked while Commons said to wait
+    assert m._COOLDOWN["wikimedia"] - __import__("time").time() > 25
+
+
+@test
+def short_retry_after_retries_once_then_succeeds():
+    reset()
+    answers = iter([FakeResp(429, {"Retry-After": "0"}), FakeResp(200, body={"ok": 1})])
+    s = FakeSession(lambda url: next(answers))
+    assert run(m._get_json(s, "https://api.openverse.org/v1/images/", {})) == {"ok": 1} and len(s.urls) == 2
+
+
+@test
+def same_search_in_flight_is_asked_once():
+    reset(); calls = Calls()
+    m._get_json = stub_by_query({"Kiyomizu-dera": 3}, calls, delay={"Kiyomizu-dera": 0.2})
+    async def two():
+        return await asyncio.gather(m._images_for(None, "", "Kiyomizu-dera", True, {}),
+                                    m._images_for(None, "", "Kiyomizu-dera", True, {}))
+    a, b = run(two())
+    assert a and a == b and calls.count("Kiyomizu-dera") == 2, calls  # one Wikipedia + one Commons request, not two of each
+
+
+@test
+def empty_answers_are_remembered_briefly():
+    reset(); calls = Calls()
+    m._get_json = stub_get_json({}, calls)
+    assert run(m._images_for(None, "", "Nowhere Cafe", False, {})) == []
+    n = len(calls)
+    assert run(m._images_for(None, "", "Nowhere Cafe", False, {})) == [] and len(calls) == n, calls
+
+
+@test
+def one_photo_never_makes_more_than_the_request_budget():
+    reset(); calls = Calls()
+    m._get_json = stub_get_json({}, calls)  # every provider and every fallback finds nothing
+    run(m._images_for(None, "http://searxng:8080", "silver classic tabby Persian cat - studio portrait", True, {},
+                      "silver classic tabby Persian cat - studio portrait"))
+    assert len(calls) <= m.REQUESTS_PER_IMAGE, (len(calls), calls)
 
 
 # ---------------- User 1: units ----------------
