@@ -1,7 +1,7 @@
 ---
 name: generative-ui-widgets
 description: "Always use for travel, itinerary, route or map questions."
-version: 2.2.0
+version: 2.2.1
 author: Hermes Agent
 license: MIT
 metadata:
@@ -147,6 +147,27 @@ Open the file:// URL and check with js():
 - budget Total, calculator Result, stock sparkline present; photos naturalWidth>0
 - resources include openfreemap + wikimedia/wikidata; if tiles 403 from egress
   IP, record it and ship (desktop client will load them normally)
+
+## Portability (Claude Code / Codex CLI / other agents)
+This skill follows the open Agent Skills (SKILL.md) standard: drop the folder
+into `~/.claude/skills/` or project `.claude/skills/` (Claude Code), or
+`~/.codex/skills/` / `.codex/skills/` (Codex CLI) — frontmatter and description
+routing are identical, and a symlink to one canonical folder works across
+agents. The scripts are pure python3 stdlib + `node --check`; no Hermes APIs.
+Differences outside Hermes:
+- Delivery: replace the `::preview{file=...}` step — output out.html and give
+  the user its absolute path (or `python3 -m http.server`). out.html is fully
+  standalone: tiles, photos and sparklines are live public URLs, so opening it
+  directly in any internet-connected browser renders everything.
+- data-hermes-send buttons are inert outside the Hermes renderer (no click
+  handlers). GPX/ICS/email actions are therefore not prompt round-trips: have
+  the agent write the .gpx/.ics file itself and state its path.
+- Skip Hermes-only tool references (desktop_preview, MEDIA:) in those agents;
+  verification step 1 (browser DOM check) becomes: node --check already passed
+  in-script + optionally curl the tile/style endpoints, then tell the user to
+  open the file.
+- Set HERMES_SEARXNG if a local SearXNG exists; otherwise the photo chain
+  degrades to Wikipedia/Commons (still fine).
 
 ## Upstream sync
 Canonical source: `hermes-port/` in the Frontier-UI repo (purely additive;
