@@ -1,7 +1,7 @@
 ---
 name: generative-ui-widgets
-description: "Use when answering travel/map/route questions: live photo-card + map + real-route widgets."
-version: 2.0.1
+description: "Always use for travel, itinerary, route or map questions."
+version: 2.1.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -17,109 +17,138 @@ ChatGPT-style generative UI built from free keyless public services, embedded in
 Hermes chat via `::preview{file="..."}`. Ported from Frontier-UI (MIT,
 Jumbomuffin777/Frontier-UI): map = MapLibre GL + OpenFreeMap vector tiles,
 routing = public OSRM, photos = Wikipedia/Commons/SearXNG, geocoding =
-Wiki coords -> Nominatim -> Photon. Ported blocks (vs upstream's 21): text,
-images, map (multi-route day-tabs + GPX), places, timeline, budget, calculator,
-weather, stock, table, compare, steps, callout, hero, quote, stats, status,
-links, email, ics, sources, followups.
+Wiki coords -> Nominatim -> Wikidata -> Photon. Ported blocks (vs upstream's
+21): text, images, map (multi-route day-tabs + GPX), places, timeline, budget,
+calculator, weather, stock, table, compare, steps, callout, hero, quote, stats,
+status, links, email, ics, sources, followups.
 
 Rendering requires the Hermes desktop app (`::preview` is a desktop directive;
 the TUI prints it literally). The pipeline itself is platform-neutral: on any
-surface you can still build the widget HTML and hand the user its absolute path.
+surface you can build the widget HTML and hand the user its absolute path.
 
 ## When to Use
-User asks for trip planning, place recommendations, walking/cycling/driving
-routes, map visualization, or answers "like Frontier-UI would".
+**Every** travel planning, itinerary, sight recommendation, walking/cycling/
+driving route, or map question — even if a plain-text answer seems enough. If
+the skill did not auto-load for such a question, load it anyway: answering
+these questions without a widget is the wrong default.
+
+## Time budget (measured: naive runs burned 10-25 min)
+- Default blocks: hero + map + timeline + budget + weather + images. Add
+  stock/table/compare/calculator/steps/status/quotes ONLY when the user asked.
+- Run `scripts/coords.py` first for any stop unlikely to have a Wikipedia
+  article (ruins, shrines, tunnels, viewpoints, trails), then hardcode lat/lon
+  into the spec. NEVER hand-roll coordinate-fetch scripts — that was the #1
+  time sink in field tests (6 throwaway scripts, half 403'd).
+- One build per spec pass. A build takes 1-3 min (rate-limit pacing is built
+  in); fix the spec, rebuild once, don't rebuild per tweak.
+- Verify once in the browser, then STOP: max 2 fix cycles. Tile 403s / map
+  `load` never firing from a datacenter or cloud egress IP is an ENVIRONMENT
+  limitation (OpenFreeMap/Nominatim fair-use), not a spec bug — verify blocks,
+  pin counts, photos and tab linkage in the DOM instead of waiting for tiles;
+  ship with a one-line caveat.
+- Do NOT read build_widget.py source to recall the spec format — the cheat
+  sheet below is authoritative.
 
 ## Procedure
-
-1. Write a spec JSON (v2 format, `blocks` array; upstream examples/ are a good
-   reference):
-   ```json
-   {
-     "title": "Two-day trip", "hint": "New Taipei City",
-     "blocks": [
-       {"type": "hero", "md": "..."},
-       {"type": "map", "mode": "car", "hint": "New Taipei City",
-        "stops": [{"name": "Old Cat Street", "page": "Old Cat Street", "day": "Day 1", "rating": 4.5, "tags": ["cat village"]}],
-        "routes": [{"label": "Day 1", "mode": "car"}, {"label": "Day 2", "mode": "foot"}]},
-       {"type": "timeline", "items": [{"time": "09:00", "title": "...", "place": "Old Cat Street", "day": "Day 1"}]},
-       {"type": "budget", "items": [{"label": "Tickets", "cost": 90}], "cap": 500},
-       {"type": "calculator", "expr": "p*r*i/(1-(1+i)**-n)", "vars": {"p": {"label": "Principal", "min": 0, "max": 10000000, "def": 5000000}}},
-       {"type": "weather", "place": "Ruifang"},
-       {"type": "stock", "symbols": [{"sym": "2330.TW"}, {"sym": "BTC-USD"}]},
-       {"type": "table", "headers": ["Site", "Ticket"], "rows": [["Old Cat St", "free"]]},
-       {"type": "email", "to": "...", "subject": "...", "body": "..."},
-       {"type": "ics", "title": "...", "start": "20261121T0900", "end": "20261121T1100", "place": "Old Cat Street"}
-     ],
-     "sources": [{"title": "Wikipedia", "url": "https://..."}],
-     "followups": ["rework as one-night-two-day"]
-   }
-   ```
-   Rules: each stop's `day` must equal its `routes[i].label` (day-tabs link to
-   them); timeline `place` must be byte-identical to a stop name (row click
-   flashes the pin); `page` = Wikipedia article title (most reliable geocode
-   source — always give it when the place name is ambiguous; for CJK names the
-   article title often differs from the colloquial name); `hint` = city/country
-   (drives Nominatim countrycodes).
-2. Run the pipeline: `python3 scripts/build_widget.py spec.json out.html`
-   (geocode -> OSRM -> weather/stock -> photos -> render; prints per-leg
-   distance/time + geocode notes — reuse them verbatim in the text summary).
-3. Verify rendering (see Verification), then deliver via
-   `::preview{file="<absolute path to out.html>"}`.
-4. Also give a text summary (distances/times/stop count/costs) — the widget is
-   only the visual layer.
-5. When the user clicks a widget button, its `data-hermes-send` text arrives as
-   a user message; dispatch by content:
+1. `python3 scripts/coords.py "Stop A" "Stop B" ...` — batch-resolve coords for
+   thin/Wikidata-only sites; feed the output straight into stops.
+2. Write the spec JSON per the cheat sheet (collected lat/lon + `page` where available).
+3. `python3 scripts/build_widget.py spec.json out.html` — geocode -> OSRM ->
+   weather/stock -> photos -> render; prints per-leg distance/time + geocode
+   notes; reuse them verbatim in the text summary.
+4. Verify once (see Verification), deliver via `::preview{file="<abs out.html>"}`.
+5. Always also give a text summary (distances/times/stop count/costs) — the
+   widget is the visual layer, not the answer.
+6. Widget button clicks arrive as user messages (data-hermes-send text). Dispatch:
    - "Open this page in the preview browser: <url>" -> desktop_preview(open) + read back to confirm.
-   - "Export ... as a GPX/ICS file..." -> write the .gpx/.ics from the coords in the message, deliver via MEDIA:.
-   - "Draft this email with Gmail..." -> produce a mailto link or confirm content with the user.
-   Followup button text should be written as a directly runnable rewrite instruction.
+   - "Export ... as a GPX/ICS file for me..." -> write the file from the coords in the message, deliver via MEDIA:.
+   - "Draft this email with the Gmail connector..." -> mailto link or confirm content with the user.
+   Followup buttons must be phrased as directly runnable instructions.
+
+## Spec cheat sheet (authoritative keys — do not consult the source)
+```jsonc
+{"title": "...", "hint": "city/country", "units": "metric|imperial",
+ "map_app": "google|apple", "map_h": 400, "searxng": "http://optional-instance",
+ "followups": ["rewrite instruction"],
+ "sources": [{"title": "...", "url": "..."}],
+ "blocks": [
+  {"type":"hero","h":"...","sub":"md"},
+  {"type":"text","md":"..."},
+  {"type":"stats","items":[{"l":"label","v":"value","d":"+delta"}]},
+  {"type":"chart","kind":"bar|line","labels":[],"values":[],"unit":""},
+  {"type":"table","headers":[],"rows":[[]]},
+  {"type":"compare","columns":[{"h":"","items":["md"]}]},
+  {"type":"steps","items":["md"]},
+  {"type":"callout","icon":"emoji","title":"","md":""},
+  {"type":"quote","md":"","cite":""},
+  {"type":"status","items":[{"dot":"ok|warn|err","label":"","note":""}]},
+  {"type":"links","items":[{"url":"","title":"optional (else fetched)"}]},
+  {"type":"weather","place":"name","days":5},          // or lat/lon
+  {"type":"stock","symbols":[{"sym":"2330.TW","name":"optional"}]},
+  {"type":"budget","items":[{"label":"","cost":90}],"cap":500,"per_person":false,"currency":"USD"},
+  {"type":"calculator","title":"","expr":"p*r*i/(1-(1+i)**-n)",
+   "vars":{"p":{"label":"Principal","min":0,"max":10000000,"def":5000000,"step":1}},"unit":"","money":true},
+  {"type":"email","subject":"","body":""},
+  {"type":"ics"},                                      // button; agent later writes the real .ics
+  {"type":"sources","items":[{"title":"","url":""}]},
+  {"type":"images","items":[{"name":"or query","page":"optional wiki title"}]},
+  {"type":"map","mode":"car|foot|bike","hint":"city",
+   "stops":[{"name":"","page":"wiki title if any","lat":0,"lon":0,"day":"Day 1",
+             "rating":4.5,"price":"","area":"","tags":[]}],
+   "routes":[{"label":"Day 1","mode":"car","stops":["optional subset of stop names"]}]},
+  {"type":"timeline","items":[{"time":"09:00","title":"","place":"== stop name exactly","day":"Day 1","md":""}]}
+ ]}
+```
+Rules: stop `day` == its route `label`; timeline `place` byte-identical to a
+stop name; prefer explicit `lat`/`lon` (from coords.py) plus `page` when the
+name is ambiguous; `hint` drives Nominatim countrycodes; for CJK names the wiki
+article title often differs from the colloquial name — give `page` explicitly.
 
 ## Valves
-- mode = foot|bike|car (OSRM routed-foot/bike/car). Multi-day trips use the routes array, one mode per route.
-- Map style `tiles.openfreemap.org/styles/liberty`; switch to positron for a cleaner basemap.
-- Photo priority: wiki summary -> local SearXNG if configured (spec `"searxng": "http://..."` or HERMES_SEARXNG env; SearXNG JSON API uses the `q=` param) -> Commons. Only hot-link-safe hosts pass (wikimedia/flickr/openverse/unsplash).
+- mode = foot|bike|car (OSRM routed-foot/bike/car). Multi-day = routes array, one mode per route.
+- Map style `tiles.openfreemap.org/styles/liberty`; positron for a cleaner basemap.
+- Photo priority: wiki summary -> local SearXNG if configured (spec `"searxng"` or HERMES_SEARXNG env; JSON API uses `q=`) -> Commons. Only hot-link-safe hosts pass (wikimedia/flickr/openverse/unsplash).
 - stock = Yahoo Finance chart API (1D/1M/1Y SVG); weather = open-meteo.
 
 ## Pitfalls
-- **Ambiguous place names**: Nominatim hits same-named places far away. `page`
-  (wiki article) is the reliable fix; the script has a consensus repair (median
-  clustering over all stops; outliers re-pick from candidates) but giving the
-  right `page`/lat-lon in the spec is the real solution. Geocode failures raise
-  an error telling you to add `page` or lat/lon.
-- **CJK names**: TW_HINT (Taiwan place regex) and SUFFIX_TRIMS (Chinese generic
-  suffixes like "old street"/"scenic area"/"station") exist purely to make CJK
-  geocoding work — keep them; they are data, not prose. CJK tail-trim variants
-  are tried progressively; the consensus cluster catches bad hits.
-- **Sandbox dead links**: the `::preview` iframe is `sandbox="allow-scripts"` —
-  `<a href>`, window.open, blob downloads, clipboard all fail silently; only
-  data-hermes-send works. Every clickable element in the template emits a prompt.
-- **JS braces**: never generate HTML/JS with f-string interpolation of braces;
-  HTML is built with f-strings but the JS lives in templates/widget.html via
-  `__TOKEN__` replacement.
-- **node --check before delivery**: the script extracts the inline script and
-  syntax-checks it; never deliver if it fails.
-- **Fix the source, not the artifact**: text errors go in spec.json, re-run the
-  pipeline; never hand-edit the HTML.
-- **Script mixing in data strings**: wiki/OSM sources can mix simplified and
-  traditional Chinese — scan strings before shipping to zh-TW users.
-- **Public endpoint fair use**: OSRM/Nominatim are rate-limited; query once per
-  widget build, cache results in scratch.
-- **Widget size**: outer `.wrap` fixed at 760px; colors only via theme vars, no body background.
-- **vision_analyze may 404**: verify rendering via DOM/network checks, not screenshots.
-- **tab/timeline linkage**: stops.day == route.label and timeline.place == stop.name,
-  exact case/spacing; mismatches make day-tab filtering miss rows (the script notes it).
+- **Ambiguous place names**: Nominatim hits same-named places far away. Explicit
+  lat/lon or wiki `page` is the reliable fix; the script has consensus
+  clustering (outliers re-pick from candidates) but the spec should be right
+  first. Failures raise "add 'page' or lat/lon" — resolve via coords.py output,
+  do not improvise fetch scripts.
+- **CJK names**: TW_HINT (Taiwan regex) and SUFFIX_TRIMS (Chinese generic
+  suffixes: old street/scenic area/station...) are functional geocoding data
+  tables, not prose — keep them. CJK tail-trim variants are tried progressively.
+- **403s from datacenter/cloud egress IPs**: Wikimedia/Nominatim/OpenFreeMap
+  rate-limit or block datacenter IPs. Never hand-roll urllib without the custom
+  UA (instant 403); the skill scripts carry UA + backoff. Tile 403s seen during
+  verification are environmental — ship with a caveat, don't loop.
+- **Sandbox dead links**: `::preview` iframe is `sandbox="allow-scripts"` —
+  `<a href>`, window.open, blob, clipboard fail silently; only data-hermes-send
+  works. Every clickable element emits a prompt.
+- **JS braces**: HTML via f-strings; JS lives in templates/widget.html via
+  `__TOKEN__` replacement — never interpolate JS with f-strings.
+- **node --check before delivery**: the script syntax-checks the inline script;
+  never deliver on failure.
+- **Fix the source, not the artifact**: edit spec.json and rebuild; never
+  hand-edit the HTML.
+- **Script mixing in data**: wiki/OSM strings can mix simplified and
+  traditional Chinese — scan before shipping to zh-TW users.
+- **Public endpoint fair use**: OSRM/Nominatim are rate-limited; one query pass
+  per build, cache in scratch.
+- **Widget size**: outer `.wrap` fixed 760px; colors only via theme vars, no body background.
+- **vision_analyze may 404**: verify via DOM/network, not screenshots.
 
-## Verification
-Open the file:// URL in the browser and check with js():
-- `!!document.querySelector('#map canvas')` -> true; `.pin` count == stop count
-- initial state: visible pins/tl rows == Day 1 stops/rows (day-tabs initial filter)
-- switch tab -> pin count changes; click a timeline row -> `.pin.hi` == 1
-- budget `.tot b` and calculator `.res b` show computed values; stock `svg.on` one per symbol
-- photos naturalWidth>0; `performance.getEntriesByType('resource')` contains openfreemap and wikimedia
+## Verification (one browser pass, max 2 fix cycles)
+Open the file:// URL and check with js():
+- `.pin` count == stop count; visible pins/rows on the initial tab == Day 1 counts
+- switch tab -> visible pin count changes; click timeline row -> `.pin.hi` == 1
+- budget Total, calculator Result, stock sparkline present; photos naturalWidth>0
+- resources include openfreemap + wikimedia/wikidata; if tiles 403 from egress
+  IP, record it and ship (desktop client will load them normally)
 
 ## Upstream sync
-The canonical source of truth is `hermes-port/` in the Frontier-UI repo (a purely
-additive directory; upstream files are never touched). `hermes-port/sync.sh`
-installs it to the live Hermes skill at `~/.hermes/skills/generative-ui-widgets/`.
-After upstream updates: git pull, diff src/, and only ever edit hermes-port/.
+Canonical source: `hermes-port/` in the Frontier-UI repo (purely additive;
+upstream files never touched). `hermes-port/sync.sh` installs to the live
+Hermes skill at `~/.hermes/skills/generative-ui-widgets/`. After upstream
+updates: git pull, diff src/, edit only hermes-port/.

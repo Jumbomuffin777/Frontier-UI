@@ -15,16 +15,22 @@ Spec v2: {title, units(metric|imperial), followups[], blocks:[
 Sandbox rule (upstream #144361): NO anchors/window.open/blob/clipboard survive; every
 action is a data-hermes-send prompt the agent later executes. Never use f-strings for JS.
 """
-import json, sys, os, re, math, html as H, subprocess, urllib.request, urllib.parse, time
+import json, sys, os, re, math, html as H, subprocess, urllib.request, urllib.parse, urllib.error, time
 
 UA = {"User-Agent": "Mozilla/5.0 (compatible; HermesGenUI/2.0 personal assistant)"}
 SEARXNG = os.environ.get("HERMES_SEARXNG", "http://192.168.100.212:4000")
 PALETTE = ["#e5484d", "#3e63dd", "#30a46c", "#f2a33c", "#a855f7", "#0ea5e9"]
 notes_global = []
 
-def get(url, timeout=20):
+def get(url, timeout=20, retry=True):
     req = urllib.request.Request(url, headers=UA)
-    return json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode())
+    try:
+        return json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode())
+    except urllib.error.HTTPError as he:
+        if retry and he.code in (403, 429):
+            time.sleep(2.0)
+            return get(url, timeout, retry=False)
+        raise
 
 TW_HINT = re.compile(r"(台灣|臺灣|台北|新北|桃園|台中|高雄|台南|基隆|新竹|嘉義|屏東|宜蘭|花蓮|台東|苗栗|彰化|南投|雲林|金門|澎湖)")
 NEAR = []  # geocoded points of this build, used for sanity
@@ -58,6 +64,19 @@ def geocode_candidates(name, hint, page=None):
             r = get("https://nominatim.openstreetmap.org/search?format=json&limit=1" + cc + "&q=" + urllib.parse.quote(q.strip()))
             if r: add((float(r[0]["lat"]), float(r[0]["lon"])))
         except Exception: pass
+    try:  # Wikidata search + coordinates: minor sites (ruins/shrines/tunnels) often lack a wiki article
+        s = get("https://www.wikidata.org/w/api.php?action=query&format=json&origin=*&list=search"
+                "&srsearch=" + urllib.parse.quote((name + " " + (hint or "")).strip()) + "&srnamespace=0&srlimit=3")
+        titles = [h["title"] for h in (s.get("query") or {}).get("search", []) if h.get("ns") == 0]
+        if titles:
+            q = get("https://www.wikidata.org/w/api.php?action=query&format=json&origin=*&prop=coordinates"
+                    "&titles=" + urllib.parse.quote("|".join(titles[:3])))
+            for pg in (q.get("query") or {}).get("pages", {}).values():
+                for c in pg.get("coordinates", []):
+                    try: add((float(c["lat"]), float(c["lon"])))
+                    except (KeyError, ValueError): pass
+                    break
+    except Exception: pass
     try:  # Photon as last resort
         u = "https://photon.komoot.io/api/?format=json&lang=zh&limit=1&q=" + urllib.parse.quote(name)
         if NEAR: u += f"&lat={NEAR[-1][0]}&lon={NEAR[-1][1]}"
