@@ -51,14 +51,14 @@ def geocode_candidates(name, hint, page=None):
         if name.endswith(suf) and len(name) > len(suf) + 1: q2.append(name[: -len(suf)])
     base = name
     while len(base) > 2 and len(q2) < 7:
-        base = base[:-1]; q2.append(base)  # CJK 逐字去尾："猴硐貓街"→"猴硐貓"→"猴硐"
+        base = base[:-1]; q2.append(base)  # CJK tail-trim: progressively strip trailing characters
     for q in q2:
         if not q.strip(): continue
         try:
             r = get("https://nominatim.openstreetmap.org/search?format=json&limit=1" + cc + "&q=" + urllib.parse.quote(q.strip()))
             if r: add((float(r[0]["lat"]), float(r[0]["lon"])))
         except Exception: pass
-    try:  # Photon 最後手段
+    try:  # Photon as last resort
         u = "https://photon.komoot.io/api/?format=json&lang=zh&limit=1&q=" + urllib.parse.quote(name)
         if NEAR: u += f"&lat={NEAR[-1][0]}&lon={NEAR[-1][1]}"
         hits = get(u).get("features", [])
@@ -72,7 +72,7 @@ def _d(p, q): return abs(p[0]-q[0]) + abs(p[1]-q[1])  # ~111km per unit; 3.0 ≈
 
 def geocode(name, hint, page=None):
     c = geocode_candidates(name, hint, page)
-    if not c: raise SystemExit(f"geocode failed: {name} — add 'page' (wikipedia 條目) 或更精確的 hint")
+    if not c: raise SystemExit(f"geocode failed: {name} — add 'page' (wikipedia article) or a more precise hint")
     pick = c[0]
     if NEAR:
         best = min(c, key=lambda p: _d(p, NEAR[-1]))
@@ -94,7 +94,7 @@ def photo(name, page, searxng):
             for it in r.get("results", [])[:6]:
                 u = it.get("img_src") or it.get("thumbnail") or ""
                 if u.startswith("//"): u = "https:" + u
-                # 過濾防熱链網域（pinimg/pixnet 403），只認可直連的圖床
+                # filter hotlink-blocked image hosts (pinimg/pixnet 403); allow only directly-linkable CDNs
                 if u.startswith("http") and any(h in u for h in ("wikimedia.org", "wikipedia.org", "staticflickr.com", "openverse.org", "unsplash.com")):
                     return u, it.get("url", ""), "searxng"
         except Exception: pass
@@ -165,7 +165,7 @@ def page_title(url):
 WMO = {0:"☀️",1:"🌤️",2:"⛅",3:"☁️",45:"🌫️",48:"🌫️",51:"🌦️",53:"🌦️",55:"🌧️",56:"🌧️",57:"🌧️",61:"🌦️",63:"🌧️",65:"🌧️",66:"🌧️",67:"🌧️",71:"🌨️",73:"🌨️",75:"❄️",77:"❄️",80:"🌦️",81:"🌧️",82:"⛈️",85:"🌨️",86:"🌨️",95:"⛈️",96:"⛈️",99:"⛈️"}
 
 def fdist(m, units):
-    return (f"{m*0.000621371:.1f} mi" if units == "imperial" else f"{m/1000:.2f} 公里")
+    return (f"{m*0.000621371:.1f} mi" if units == "imperial" else f"{m/1000:.2f} km")
 
 def ftick(c, units):
     v = (c * 9 / 5 + 32) if units == "imperial" else c
@@ -186,7 +186,7 @@ def main():
         blocks_in = [{"type": "map", "mode": spec.get("mode", "car"), "hint": spec.get("hint"), "stops": stops}]
     if blocks_in is None:
         raise SystemExit("spec needs blocks[] (v2) or places[] (v1 legacy)")
-    title = spec.get("title", "地圖")
+    title = spec.get("title", "Map")
 
     stops, routes, chips = [], [], []
     stop_idx = {}
@@ -229,7 +229,7 @@ def main():
             for it in b.get("items", []):
                 url = it["url"]; ttl = it.get("title") or page_title(url)
                 fav, dom = favicon(url)
-                send = f"用預覽瀏覽器開啟這個網頁：{url}"
+                send = f"Open this page in the preview browser: {url}"
                 cards += (f'<button class="lnk" data-hermes-send="{H.escape(send)}"><div class="shot" style="height:auto;padding:10px 12px;display:flex;gap:8px;align-items:center">'
                           f'{fav}<div><div class="t" style="font-size:12px">{H.escape(ttl[:70])}</div><div class="s">{H.escape(dom)}</div></div></div></button>')
                 notes.append(f"link title fetched: {dom}")
@@ -246,8 +246,8 @@ def main():
                 wd = d["time"][i][5:].replace("-", "/")
                 cards += (f'<div class="wc"><div class="l">{wd}</div><div class="e">{WMO.get(d["weather_code"][i], "🌡️")}</div>'
                           f'<div><span class="hi">{ftick(d["temperature_2m_max"][i], units)}°</span> <span class="lo">{ftick(d["temperature_2m_min"][i], units)}°</span></div>'
-                          f'<div class="p">雨機率 {d["precipitation_probability_max"][i] or 0}%</div></div>')
-            blocks_html.append(f'<h2>🌦️ {H.escape(b.get("place") or title)} 五天預報（open-meteo 即時）</h2><div class="wgrid">{cards}</div>')
+                          f'<div class="p">Precip {d["precipitation_probability_max"][i] or 0}%</div></div>')
+            blocks_html.append(f'<h2>🌦️ {H.escape(b.get("place") or title)} 5-day forecast (open-meteo live)</h2><div class="wgrid">{cards}</div>')
             notes.append(f"weather ok: {b.get('place','')}")
         elif t == "stock":
             secs = ""
@@ -269,16 +269,16 @@ def main():
                 neg = " neg" if (chg1d or 0) < 0 else ""
                 chgtxt = f"{(chg1d or 0):+.2f}%"
                 secs += (f'<div class="sc"><div class="hd"><div><b>{H.escape(it.get("name") or sym)}</b> <span class="s">{H.escape(sym)}</span></div>'
-                         f'<div class="px">{f"{last:,.2f}" if last else "—"} <span class="ch{neg}">{chgtxt} (1日)</span></div></div>'
+                         f'<div class="px">{f"{last:,.2f}" if last else "—"} <span class="ch{neg}">{chgtxt} (1d)</span></div></div>'
                          f'<div class="rg">{tabs}</div>{svgs}</div>')
                 notes.append(f"stock {sym}: ranges ok={sum(1 for r in ranges.values() if r[0])}/3")
-            blocks_html.append(f'<h2>📈 即時報價（Yahoo，answer-time 抓取）</h2>{secs}')
+            blocks_html.append(f'<h2>📈 Live quotes (Yahoo, fetched at answer time)</h2>{secs}')
         elif t == "budget":
             rows = "".join(f'<div class="brow"><span style="min-width:110px">{H.escape(i["label"])}</span>'
                            f'<input type="range" min="0" max="200" value="100" data-i="{k}"><span class="c" style="min-width:60px;text-align:right">{i["cost"]:,}</span></div>'
                            for k, i in enumerate(b.get("items", [])))
             tot = sum(i["cost"] for i in b.get("items", []))
-            blocks_html.append(f'<div class="bud"><b>💸 預算滑桿</b>（目前總計）{rows}<div class="tot">總計 <b>{tot:,}</b>{H.escape(b.get("currency",""))} <span class="warn"></span></div></div>')
+            blocks_html.append(f'<div class="bud"><b>💸 Budget sliders</b> (current total){rows}<div class="tot">Total <b>{tot:,}</b>{H.escape(b.get("currency",""))} <span class="warn"></span></div></div>')
             budget_js_data = json.dumps({"items": b.get("items", []), "cap": b.get("cap", 0), "per": bool(b.get("per_person"))})
             blocks_html[-1] = blocks_html[-1].replace('class="bud"', f'class="bud" data-bud=\'{budget_js_data}\'')
         elif t == "calculator":
@@ -289,27 +289,27 @@ def main():
                            f'<span class="v" style="min-width:70px;text-align:right">{v.get("def",0)}</span></div>'
                            for k, v in b.get("vars", {}).items())
             calc_data = json.dumps({"expr": expr, "unit": b.get("unit", ""), "money": bool(b.get("money"))})
-            blocks_html.append(f'<div class="calc" data-calc=\'{calc_data}\'><b>🧮 {H.escape(b.get("title","計算機"))}</b>{rows}<div class="res">結果 <b>—</b></div></div>')
+            blocks_html.append(f'<div class="calc" data-calc=\'{calc_data}\'><b>🧮 {H.escape(b.get("title","Calculator"))}</b>{rows}<div class="res">Result <b>—</b></div></div>')
         elif t == "email":
-            send = f"用 Gmail 連線器幫我起草一封郵件：主旨「{b.get('subject','')}」，內容大綱：{b.get('body','（由你依這輪對話內容補充）')}"
-            blocks_html.append(f'<div class="blk"><button class="btn" data-hermes-send="{H.escape(send)}">✉️ 用 Gmail 起草這封信</button></div>')
+            send = f"Draft this email with the Gmail connector: subject '{b.get('subject','')}', outline: {b.get('body','(fill from this conversation)')}"
+            blocks_html.append(f'<div class="blk"><button class="btn" data-hermes-send="{H.escape(send)}">✉️ Draft this email with Gmail</button></div>')
         elif t == "ics":
-            blocks_html.append('<div class="blk"><button class="btn" data-hermes-send="__ICS_SEND__">📅 把行程加入行事曆（.ics 檔）</button></div>')
+            blocks_html.append('<div class="blk"><button class="btn" data-hermes-send="__ICS_SEND__">📅 Add itinerary to calendar (.ics file)</button></div>')
         elif t == "sources":
             schips = ""
             for s in b.get("items", []):
                 fav, dom = favicon(s["url"])
-                send = f"用預覽瀏覽器開啟這個網頁：{s['url']}"
+                send = f"Open this page in the preview browser: {s['url']}"
                 schips += f'<button data-hermes-send="{H.escape(send)}">{fav}{H.escape(s.get("title", dom))}</button>'
-            blocks_html.append(f'<div class="blk srcs"><span class="attr">來源：</span>{schips}</div>')
+            blocks_html.append(f'<div class="blk srcs"><span class="attr">Sources:</span>{schips}</div>')
         elif t == "images":
             cards = ""
             for k, it in enumerate(b.get("items", [])):
                 nm = it.get("name") or it.get("query")
                 u, wm, prov = photo(nm, it.get("page"), searxng)
                 photo_stats[prov] += 1
-                img = f'<img src="{H.escape(u)}" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'"><div class="ph" style="display:none">載入失敗</div>' if u else '<div class="ph">無照片</div>'
-                send = (f"用預覽瀏覽器開啟這個網頁：{wm}" if wm else f"幫我查「{nm}」的圖片來源網頁並開啟")
+                img = f'<img src="{H.escape(u)}" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'"><div class="ph" style="display:none">Image failed</div>' if u else '<div class="ph">No photo</div>'
+                send = (f"Open this page in the preview browser: {wm}" if wm else f"Find and open a source page for: {nm}")
                 cards += f'<button class="card" data-hermes-send="{H.escape(send)}"><div class="shot">{img}</div><div class="meta"><div class="t">{H.escape(nm)}</div><div class="s">{prov}</div></div></button>'
             blocks_html.append(f'<div class="blk row">{cards}</div>')
         elif t == "map":
@@ -321,7 +321,7 @@ def main():
                 cands = None
                 if lat is None:
                     cands = geocode_candidates(s["name"], s.get("hint") or hint, s.get("page"))
-                    if not cands: raise SystemExit(f"geocode failed: {s['name']} — add 'page' (維基條目) 或 lat/lon")
+                    if not cands: raise SystemExit(f"geocode failed: {s['name']} — add 'page' (wiki article) or lat/lon")
                     lat, lon = cands[0]
                     NEAR.append((lat, lon))
                 si = len(stops); stop_idx[s["name"]] = si
@@ -346,8 +346,8 @@ def main():
                 tags = "".join(f'<span class="tag">{H.escape(tg)}</span>' for tg in s.get("tags", []))
                 u, wm, prov = photo(s["name"], s.get("page"), searxng)
                 photo_stats[prov] += 1
-                img = f'<img src="{H.escape(u)}" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'"><div class="ph" style="display:none">載入失敗</div>' if u else '<div class="ph">無照片</div>'
-                send = (f"用預覽瀏覽器開啟這個網頁：{wm}" if wm else f"幫我查「{s['name']}」的介紹網頁並開啟")
+                img = f'<img src="{H.escape(u)}" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'"><div class="ph" style="display:none">Image failed</div>' if u else '<div class="ph">No photo</div>'
+                send = (f"Open this page in the preview browser: {wm}" if wm else f"Find and open an info page for: {s['name']}")
                 st["card"] = (f'<button class="card" data-hermes-send="{H.escape(send)}"><div class="shot">{img}<span class="num">{si+1}</span></div>'
                               f'<div class="meta"><div class="t">{H.escape(s["name"])}</div><div class="r">{rating.strip()}{price}{area and " · " + H.escape(area) or ""}</div>'
                               f'<div class="tags">{tags}</div></div></button>')
@@ -364,28 +364,28 @@ def main():
                     try:
                         r = osrm([(stops[i]["lat"], stops[i]["lon"]) for i in idxs], rd.get("mode") or mode0)
                         geo = r["geometry"]
-                        lbl = rd.get("label") or "路線"
-                        chips.append(f'<span class="chip">🧭 {H.escape(lbl)} {fdist(r["distance"], units)} ⏱️ {int(r["duration"])//60} 分</span>')
+                        lbl = rd.get("label") or "Route"
+                        chips.append(f'<span class="chip">🧭 {H.escape(lbl)} {fdist(r["distance"], units)} ⏱️ {int(r["duration"])//60} min</span>')
                         notes.append(f"route[{ri}] {int(r['distance'])}m {int(r['duration'])}s")
                     except Exception as e:
                         geo = {"type": "LineString", "coordinates": [[stops[i]["lon"], stops[i]["lat"]] for i in idxs]}
-                        notes.append(f"route[{ri}] OSRM FAILED ({e}) -> straight-line fallback, 線段為示意直線")
-                routes.append({"label": rd.get("label") or f"路線{ri+1}", "color": color, "idxs": idxs, "geo": geo})
+                        notes.append(f"route[{ri}] OSRM FAILED ({e}) -> straight-line fallback (segment drawn as a straight line)")
+                routes.append({"label": rd.get("label") or f"Route {ri+1}", "color": color, "idxs": idxs, "geo": geo})
             cards = "".join(s["card"] for s in stops if "card" in s)
             multi = len(routes) > 1
-            tabs = '<div class="tabs">' + "".join(f'<button data-tab="{ri}"{" class=on" if ri==0 else ""}>{H.escape(r["label"])}</button>' for ri, r in enumerate(routes)) + f'<button data-tab="-1">全部</button></div>' if multi else ""
+            tabs = '<div class="tabs">' + "".join(f'<button data-tab="{ri}"{" class=on" if ri==0 else ""}>{H.escape(r["label"])}</button>' for ri, r in enumerate(routes)) + f'<button data-tab="-1">All</button></div>' if multi else ""
             gmaps = "https://www.google.com/maps/dir/" + "/".join(f"{s['lat']},{s['lon']}" for s in stops)
             coord_str = ";".join(f"{s['lat']},{s['lon']}" for s in stops)
             apples = "https://maps.apple.com/?dirflg=d&saddr=" + urllib.parse.quote(f"{stops[0]['lat']},{stops[0]['lon']}") + "&daddr=" + urllib.parse.quote(f"{stops[-1]['lat']},{stops[-1]['lon']}")
-            gp = f'把「{title}」這段路線（依序 {"、".join(s["name"] for s in stops)}；座標 {coord_str}）輸出成 GPX 檔案給我'
+            gp = f'Export the route "{title}" (order: {", ".join(s["name"] for s in stops)}; coords {coord_str}) as a GPX file for me'
             gmap_app = spec.get("map_app", "google")
             open_btns = ""
-            for app, send in (("Google Maps", f"用預覽瀏覽器開啟這個網頁：{gmaps}"), ("Apple Maps", f"用預覽瀏覽器開啟這個網頁：{apples}"),
-                              ("OSM", f"用預覽瀏覽器開啟這個網頁：https://www.openstreetmap.org/directions?route={urllib.parse.quote(coord_str.replace(';', '%20'))}"), ("GPX", gp)):
+            for app, send in (("Google Maps", f"Open this page in the preview browser: {gmaps}"), ("Apple Maps", f"Open this page in the preview browser: {apples}"),
+                              ("OSM", f"Open this page in the preview browser: https://www.openstreetmap.org/directions?route={urllib.parse.quote(coord_str.replace(';', '%20'))}"), ("GPX", gp)):
                 open_btns += f'<button data-hermes-send="{H.escape(send)}">{app}</button>'
-            ics_btn = '<button data-hermes-send="__ICS_SEND__">📅 加入行事曆（.ics）</button>'
+            ics_btn = '<button data-hermes-send="__ICS_SEND__">📅 Add to calendar (.ics)</button>'
             map_html = (f'<div class="blk">{tabs}<div id="map" style="height:{spec.get("map_h",400)}px"></div>'
-                        f'<div class="foot">{open_btns}{ics_btn}<span class="attr">地圖 © OpenStreetMap · 圖磚 © OpenFreeMap · 路線 OSRM</span></div></div>')
+                        f'<div class="foot">{open_btns}{ics_btn}<span class="attr">Map © OpenStreetMap · Tiles © OpenFreeMap · Routing OSRM</span></div></div>')
             blocks_html.append(f'<div class="blk row">{cards}</div>' + map_html)
         elif t == "timeline":
             lis = ""
@@ -399,11 +399,11 @@ def main():
                 c = stops[stop_idx[it["place"]]] if it.get("place") in stop_idx else None
                 tl_for_ics.append({"time": it.get("time"), "title": it.get("title") or it.get("place"), "place": it.get("place"),
                                    "lat": c["lat"] if c else None, "lon": c["lon"] if c else None})
-            blocks_html.append(f'<h2>🕐 時間軸</h2><ul class="tl">{lis}</ul>')
+            blocks_html.append(f'<h2>🕐 Timeline</h2><ul class="tl">{lis}</ul>')
             globals()["_tl_ics"] = tl_for_ics
     # ICS button (needs timeline data)
     tl = globals().get("_tl_ics", [])
-    ics_send = f"把這份行程輸出成 .ics 行事曆檔給我：{json.dumps(tl, ensure_ascii=False)[:1200]}"
+    ics_send = f"Export this itinerary as a .ics calendar file for me: {json.dumps(tl, ensure_ascii=False)[:1200]}"
     out = (tpl.replace("__TITLE__", H.escape(title))
               .replace("__CHIPS__", "".join(chips))
               .replace("__BLOCKS__", "".join(blocks_html))

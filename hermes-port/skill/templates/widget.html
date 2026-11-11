@@ -163,8 +163,8 @@ document.querySelectorAll('.bud').forEach(box=>{
     inputs.forEach(inp=>{ const f=+inp.value/100; const c=Math.round(d.items[+inp.dataset.i].cost*f);
       inp.parentElement.querySelector('.c').textContent=c.toLocaleString(); sum+=c; });
     const tot=sum*(d.per?inputs.length?1:1:1);
-    box.querySelector('.tot b').textContent=sum.toLocaleString()+(d.per?' (總額)':'');
-    box.querySelector('.warn').textContent=(d.cap&&sum>d.cap)?('超出預算上限 '+d.cap.toLocaleString()):'';
+    box.querySelector('.tot b').textContent=sum.toLocaleString()+(d.per?' (total)':'');
+    box.querySelector('.warn').textContent=(d.cap&&sum>d.cap)?('over budget cap: '+d.cap.toLocaleString()):'';
   }
   inputs.forEach(inp=>inp.oninput=upd); upd();
 });
