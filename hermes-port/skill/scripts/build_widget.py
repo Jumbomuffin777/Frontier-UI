@@ -104,7 +104,7 @@ def geocode(name, hint, page=None):
 def osrm(points, mode):
     host, prof = {"foot": ("routed-foot", "foot"), "bike": ("routed-bike", "bike"), "car": ("routed-car", "driving")}[mode]
     pts = ";".join(f"{lon},{lat}" for lat, lon in points)
-    return get(f"https://routing.openstreetmap.de/{host}/route/v1/{prof}/{pts}?overview=full&geometries=geojson")["routes"][0]
+    return get(f"https://routing.openstreetmap.de/{host}/route/v1/{prof}/{pts}?overview=full&geometries=geojson&alternatives=2")["routes"][:3]
 
 def photo(name, page, searxng):
     if searxng:
@@ -378,18 +378,22 @@ def main():
                 idxs = [stop_idx[n] for n in names if n in stop_idx]
                 for i in idxs: stops[i]["route"] = ri
                 color = PALETTE[ri % len(PALETTE)]
-                geo = None
+                geo = None; alt_geos = []
                 if len(idxs) >= 2:
                     try:
-                        r = osrm([(stops[i]["lat"], stops[i]["lon"]) for i in idxs], rd.get("mode") or mode0)
+                        rs = osrm([(stops[i]["lat"], stops[i]["lon"]) for i in idxs], rd.get("mode") or mode0)
+                        r = rs[0]; alts = rs[1:]
                         geo = r["geometry"]
                         lbl = rd.get("label") or "Route"
                         chips.append(f'<span class="chip">🧭 {H.escape(lbl)} {fdist(r["distance"], units)} ⏱️ {int(r["duration"])//60} min</span>')
-                        notes.append(f"route[{ri}] {int(r['distance'])}m {int(r['duration'])}s")
+                        alt_geos = [a["geometry"] for a in alts]
+                        for a in alts:
+                            chips.append(f'<span class="chip">↪️ alt ({fdist(a["distance"], units)}, ⏱️ {int(a["duration"])//60} min, {int(a["duration"]-r["duration"])//60:+d} min)</span>')
+                        notes.append(f"route[{ri}] {int(r['distance'])}m {int(r['duration'])}s alts={len(alts)}")
                     except Exception as e:
                         geo = {"type": "LineString", "coordinates": [[stops[i]["lon"], stops[i]["lat"]] for i in idxs]}
                         notes.append(f"route[{ri}] OSRM FAILED ({e}) -> straight-line fallback (segment drawn as a straight line)")
-                routes.append({"label": rd.get("label") or f"Route {ri+1}", "color": color, "idxs": idxs, "geo": geo})
+                routes.append({"label": rd.get("label") or f"Route {ri+1}", "color": color, "idxs": idxs, "geo": geo, "alts": alt_geos})
             cards = "".join(s["card"] for s in stops if "card" in s)
             multi = len(routes) > 1
             tabs = '<div class="tabs">' + "".join(f'<button data-tab="{ri}"{" class=on" if ri==0 else ""}>{H.escape(r["label"])}</button>' for ri, r in enumerate(routes)) + f'<button data-tab="-1">All</button></div>' if multi else ""

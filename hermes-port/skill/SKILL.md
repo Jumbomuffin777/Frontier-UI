@@ -1,7 +1,7 @@
 ---
 name: generative-ui-widgets
 description: "Always use for travel, itinerary, route or map questions."
-version: 2.1.0
+version: 2.2.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -106,6 +106,7 @@ article title often differs from the colloquial name — give `page` explicitly.
 
 ## Valves
 - mode = foot|bike|car (OSRM routed-foot/bike/car). Multi-day = routes array, one mode per route.
+- Routing is traffic-UNAWARE (public OSRM = static speed profiles; no keyless live-traffic API exists). Each route adds up to 2 dashed alternative routes with distance/duration deltas (OSRM alternatives=2); for departure-time / congestion-aware planning hand the user to the widget's Google/Apple Maps buttons (those apps do predictive traffic and allow setting a future departure time).
 - Map style `tiles.openfreemap.org/styles/liberty`; positron for a cleaner basemap.
 - Photo priority: wiki summary -> local SearXNG if configured (spec `"searxng"` or HERMES_SEARXNG env; JSON API uses `q=`) -> Commons. Only hot-link-safe hosts pass (wikimedia/flickr/openverse/unsplash).
 - stock = Yahoo Finance chart API (1D/1M/1Y SVG); weather = open-meteo.

@@ -112,6 +112,11 @@ if (hasMap) {
       map.addSource('rt'+i,{type:'geojson',data:{type:'Feature',geometry:r.geo}});
       map.addLayer({id:'case'+i,type:'line',source:'rt'+i,paint:{'line-color':'#ffffff','line-width':7,'line-opacity':.85},layout:{visibility:(active===-1||active===i)?'visible':'none'}});
       map.addLayer({id:'rt'+i,type:'line',source:'rt'+i,layout:{'line-cap':'round','line-join':'round',visibility:(active===-1||active===i)?'visible':'none'},paint:{'line-color':colors[i],'line-width':4}});
+      (r.alts||[]).forEach((g,j)=>{
+        const aid='alt'+i+'-'+j;
+        map.addSource(aid,{type:'geojson',data:{type:'Feature',geometry:g}});
+        map.addLayer({id:aid,type:'line',source:aid,layout:{'line-cap':'round','line-join':'round',visibility:(active===-1||active===i)?'visible':'none'},paint:{'line-color':colors[i],'line-width':2,'line-dasharray':[2,2],'line-opacity':.5}});
+      });
     });
     stops.forEach((s,i)=>{
       const ri = (s.route!=null)?s.route:0;
@@ -139,7 +144,7 @@ function setTab(i){
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', +b.dataset.tab===i));
   if (map) {
     routes.forEach((r,k)=>{ const v=(active===-1||active===k)?'visible':'none';
-      ['case'+k,'rt'+k].forEach(l=>{ const ly=map.getLayer(l); if(ly) map.setLayoutProperty(l,'visibility',v); }); });
+      ['case'+k,'rt'+k,...(r.alts||[]).map((_,j)=>'alt'+k+'-'+j)].forEach(l=>{ const ly=map.getLayer(l); if(ly) map.setLayoutProperty(l,'visibility',v); }); });
     markers.forEach(m=>{ m.el.style.display=(active===-1||m.ri===active)?'flex':'none'; });
     fitActive();
   }

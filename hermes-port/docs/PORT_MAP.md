@@ -7,7 +7,7 @@ Hermes port replaces p9 with: agent-generated spec JSON + build_widget.py + sand
 |---|---|---|
 | text | yes | markdown-lite subset |
 | images | yes | SearXNG -> zh/en Wikipedia -> Commons chain |
-| map | yes | MapLibre GL + OpenFreeMap liberty; day tabs + per-day colored routes |
+| map | yes | MapLibre GL + OpenFreeMap liberty; day tabs + per-day colored routes + dashed OSRM alternatives |
 | places | yes | photo/rating/price/area/tags cards; link via data-hermes-send (sandbox!) |
 | timeline | yes | linked to map: click row -> flyTo pin; click pin -> highlight row |
 | budget | yes | sliders + per-person + cap, pure JS |
