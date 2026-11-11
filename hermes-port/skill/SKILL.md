@@ -1,7 +1,7 @@
 ---
 name: generative-ui-widgets
-description: "Always use for travel, itinerary, route or map questions."
-version: 2.2.1
+description: "Always use for place, food, travel, route or map Qs."
+version: 2.3.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -31,6 +31,15 @@ surface you can build the widget HTML and hand the user its absolute path.
 driving route, or map question — even if a plain-text answer seems enough. If
 the skill did not auto-load for such a question, load it anyway: answering
 these questions without a widget is the wrong default.
+
+Single-entity lookups count too: "what does X place/restaurant/hotel/cafe look
+like", "show me X", "info on X" -> build a compact lookup widget:
+hero + images (2-3 photo queries: name, name+city, name+signature dish) +
+one-pin map (explicit lat/lon from coords.py when the venue has no wiki page)
++ text/callout with facts the agent already web-searched (address, hours,
+price — the widget renders, the agent gathers). Obscure venues may yield zero
+photos (placeholder renders) — say so plainly instead of scraping hotlink-
+protected sites.
 
 ## Time budget (measured: naive runs burned 10-25 min)
 - Default blocks: hero + map + timeline + budget + weather + images. Add
