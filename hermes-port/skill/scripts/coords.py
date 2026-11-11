@@ -5,6 +5,11 @@ Prints one line per name: name<TAB>lat<TAB>lon<TAB>source. Feed the lat/lon
 straight into spec stops to bypass live geocoding entirely.
 
 Usage: python3 coords.py "Temple of the Sun" "Intihuatana Stone" ...
+       python3 coords.py --cc tw "阿宗麵線" "蜂大咖啡" ...   # city/venue lookups
+--cc <iso2> pins Nominatim to that country AND reverse-validates wiki/
+wikidata hits, so name collisions ("西本願寺" -> Kyoto temple, "蜂大咖啡"
+-> Shanghai) are rejected instead of poisoning the map. ALWAYS pass --cc
+for venue/shop queries inside a known country.
 Chain: Wikipedia REST summary -> Wikidata search+coords -> Nominatim.
 Polite by design: custom UA, ~1s spacing, one backoff retry on 403/429.
 """
@@ -48,21 +53,41 @@ def wikidata_coords(name):
                 pass
     return None
 
+CC = None
+
+def in_country(p):
+    if not CC:
+        return True
+    try:
+        # NOTE: reverse ignores the countrycodes param — compare the returned
+        # address.country_code ourselves.
+        r = get(f"https://nominatim.openstreetmap.org/reverse?format=json&lat={p[0]}&lon={p[1]}&zoom=10")
+        got = ((r or {}).get("address") or {}).get("country_code", "")
+        return bool(r and r.get("lat")) and got.lower() == CC
+    except Exception:
+        return False
+
 def nominatim(name):
-    r = get("https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + urllib.parse.quote(name))
+    cc = f"&countrycodes={CC}" if CC else ""
+    r = get("https://nominatim.openstreetmap.org/search?format=json&limit=1" + cc + "&q=" + urllib.parse.quote(name))
     if r:
         return float(r[0]["lat"]), float(r[0]["lon"]), "nominatim"
     return None
 
 def main():
-    for name in sys.argv[1:]:
+    global CC
+    args = sys.argv[1:]
+    if args[:1] == ["--cc"]:
+        CC = args[1].lower()
+        args = args[2:]
+    for name in args:
         hit, res = None, None
         for fn in (wiki_coords, wikidata_coords, nominatim):
             try:
                 hit = fn(name if fn is not wiki_coords else name.replace(" ", "_"))
             except Exception:
                 hit = None
-            if hit:
+            if hit and in_country(hit):
                 res = hit
                 break
             time.sleep(0.6)

@@ -22,10 +22,29 @@ SEARXNG = os.environ.get("HERMES_SEARXNG", "http://192.168.100.212:4000")
 PALETTE = ["#e5484d", "#3e63dd", "#30a46c", "#f2a33c", "#a855f7", "#0ea5e9"]
 notes_global = []
 
+CACHE = {}
+CACHE_PATH = None
+
+def _cache_flush():
+    if CACHE_PATH:
+        try:
+            tmp = CACHE_PATH + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(CACHE, f)
+            os.replace(tmp, CACHE_PATH)
+        except Exception:
+            pass
+
 def get(url, timeout=20, retry=True):
+    if CACHE_PATH and url in CACHE:
+        return CACHE[url]
     req = urllib.request.Request(url, headers=UA)
     try:
-        return json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode())
+        data = json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode())
+        if CACHE_PATH is not None:
+            CACHE[url] = data
+            _cache_flush()
+        return data
     except urllib.error.HTTPError as he:
         if retry and he.code in (403, 429):
             time.sleep(2.0)
@@ -195,7 +214,16 @@ def calc_safe(expr):
     return not re.search(r"\b(while|for|function|eval|window|document|this|new|fetch|import|alert|require)\b", expr)
 
 def main():
+    global CACHE_PATH
     spec = json.load(open(sys.argv[1]))
+    if os.environ.get("GUI_CACHE", "1") != "0":
+        CACHE_PATH = sys.argv[1] + ".httpcache.json"
+        if os.path.exists(CACHE_PATH):
+            try:
+                CACHE.update(json.load(open(CACHE_PATH)))
+                print(f"[cache] {len(CACHE)} cached responses reused (GUI_CACHE=0 to bypass)")
+            except Exception:
+                pass
     tpl = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "templates", "widget.html")).read()
     units = spec.get("units", "metric")
     searxng = spec.get("searxng", SEARXNG)
@@ -357,13 +385,19 @@ def main():
                             stops[si]["lat"], stops[si]["lon"] = best
                         else:
                             notes_global.append(f"WARNING {stops[si]['name']} far from itinerary cluster — set explicit lat/lon or page")
+            budget_left = [b.get("max_stop_photos", spec.get("max_stop_photos"))]  # None = unlimited
             for k, s in enumerate(b.get("stops", [])):
                 st = stops[base + k]; si = base + k
                 rating = f' ★{s["rating"]}' if s.get("rating") else ""
                 price = f'　{s["price"]}' if s.get("price") else ""
                 area = s.get("area", "")
                 tags = "".join(f'<span class="tag">{H.escape(tg)}</span>' for tg in s.get("tags", []))
-                u, wm, prov = photo(s["name"], s.get("page"), searxng)
+                if budget_left[0] is not None and budget_left[0] <= 0:
+                    u, wm, prov = None, "", "none"
+                else:
+                    u, wm, prov = photo(s["name"], s.get("page"), searxng)
+                    if budget_left[0] is not None:
+                        budget_left[0] -= 1
                 photo_stats[prov] += 1
                 img = f'<img src="{H.escape(u)}" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'"><div class="ph" style="display:none">Image failed</div>' if u else '<div class="ph">No photo</div>'
                 send = (f"Open this page in the preview browser: {wm}" if wm else f"Find and open an info page for: {s['name']}")

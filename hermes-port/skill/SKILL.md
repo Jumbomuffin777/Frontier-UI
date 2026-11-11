@@ -1,7 +1,7 @@
 ---
 name: generative-ui-widgets
 description: "Always use for place, food, travel, route or map Qs."
-version: 2.3.0
+version: 2.4.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -49,7 +49,13 @@ protected sites.
   into the spec. NEVER hand-roll coordinate-fetch scripts — that was the #1
   time sink in field tests (6 throwaway scripts, half 403'd).
 - One build per spec pass. A build takes 1-3 min (rate-limit pacing is built
-  in); fix the spec, rebuild once, don't rebuild per tweak.
+  in); fix the spec, rebuild once, don't rebuild per tweak. Every fetched URL
+  (geocode/photo/OSRM/weather/link title) is persisted to
+  `<spec>.httpcache.json` and reused on rebuilds (`GUI_CACHE=0` to refetch) —
+  a one-number spec fix then rebuilds in ~2 s instead of re-hunting the net.
+- 10+ stops: set `max_stop_photos` (map block or spec level, 6-8 is plenty) to
+  bound stop-card photo lookups; the images block is an explicit request and
+  doesn't count against the budget. NEVER let 20+ stops all photo-hunt.
 - Verify once in the browser, then STOP: max 2 fix cycles. Tile 403s / map
   `load` never firing from a datacenter or cloud egress IP is an ENVIRONMENT
   limitation (OpenFreeMap/Nominatim fair-use), not a spec bug — verify blocks,
@@ -59,8 +65,13 @@ protected sites.
   sheet below is authoritative.
 
 ## Procedure
-1. `python3 scripts/coords.py "Stop A" "Stop B" ...` — batch-resolve coords for
-   thin/Wikidata-only sites; feed the output straight into stops.
+1. `python3 scripts/coords.py --cc <iso2> "Stop A" "Stop B" ...` — batch-resolve
+   coords for thin/Wikidata-only sites; feed the output straight into stops.
+   ALWAYS pass `--cc` for venue/shop names: small names collide across countries
+   ("西本願寺" -> Kyoto temple, "蜂大咖啡" -> Shanghai); `--cc` pins Nominatim to
+   that country and reverse-validates wiki/Wikidata hits (mismatched country is
+   rejected, chain continues). Without it a 20-venue batch resolves half wrong-
+   country, half FAILED, and the disambiguation re-scan burns 4-5 more minutes.
 2. Write the spec JSON per the cheat sheet (collected lat/lon + `page` where available).
 3. `python3 scripts/build_widget.py spec.json out.html` — geocode -> OSRM ->
    weather/stock -> photos -> render; prints per-leg distance/time + geocode
