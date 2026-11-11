@@ -90,10 +90,13 @@ def osrm(points, mode):
 def photo(name, page, searxng):
     if searxng:
         try:
-            r = get(f"{searxng}/search?format=json&categories=images&query=" + urllib.parse.quote(name), timeout=8)
+            r = get(f"{searxng}/search?format=json&categories=images&q=" + urllib.parse.quote(name), timeout=8)
             for it in r.get("results", [])[:6]:
-                u = it.get("img_src") or it.get("thumbnail")
-                if u and u.startswith("http"): return u, it.get("url", ""), "searxng"
+                u = it.get("img_src") or it.get("thumbnail") or ""
+                if u.startswith("//"): u = "https:" + u
+                # 過濾防熱链網域（pinimg/pixnet 403），只認可直連的圖床
+                if u.startswith("http") and any(h in u for h in ("wikimedia.org", "wikipedia.org", "staticflickr.com", "openverse.org", "unsplash.com")):
+                    return u, it.get("url", ""), "searxng"
         except Exception: pass
     for host in ("zh", "en"):
         try:
