@@ -1,0 +1,72 @@
+{
+  "title": "🚗 新北兩日自駕：猴硐九份 × 平溪十分（全部 block 示範）",
+  "units": "metric",
+  "map_app": "google",
+  "followups": ["把第二日改成平溪線火車站跳站", "加訂九份民宿推薦", "輸出 GPX 和 .ics 檔"],
+  "blocks": [
+    {"type": "hero", "h": "猴硐×九份×平溪 兩日山線自駕", "sub": "第一天：**猴硐→九份→金瓜石**；第二天：**十分老街→十分瀑布**。全程柏油路，一般房車可跑。"},
+    {"type": "stats", "items": [
+      {"l": "總開車距離", "v": "約 160 km"},
+      {"l": "純車程", "v": "約 4 小時"},
+      {"l": "站點", "v": "5 站"},
+      {"l": "兩人預算", "v": "NT$3,900", "d": "含油錢過路費"}
+    ]},
+    {"type": "map", "hint": "新北市", "mode": "car", "map_h": 420, "stops": [
+      {"name": "猴硐貓街", "page": "猴硐貓村", "rating": 4.5, "price": "免費", "area": "瑞芳", "tags": ["貓村", "礦業"]},
+      {"name": "九份老街", "page": "九份", "rating": 4.4, "price": "免費入街", "area": "瑞芳", "tags": ["夜景", "茶館", "芋粿"]},
+      {"name": "金瓜石", "page": "金瓜石", "area": "瑞芳", "tags": ["神社", "夕陽"]},
+      {"name": "十分老街", "page": "十分", "rating": 4.4, "price": "免費", "area": "平溪", "tags": ["天燈", "鐵道"]},
+      {"name": "十分瀑布", "page": "十分瀑布", "rating": 4.3, "price": "免費", "area": "平溪", "tags": ["台版尼加拉瓜"]}
+    ], "routes": [
+      {"label": "Day 1 猴硐九份圈", "mode": "car", "stops": ["猴硐貓街", "九份老街", "金瓜石"]},
+      {"label": "Day 2 平溪線", "mode": "car", "stops": ["十分老街", "十分瀑布"]}
+    ]},
+    {"type": "timeline", "items": [
+      {"time": "08:00", "title": "樹林出發", "place": "猴硐貓街", "md": "國1→台62→台2丁，山線弯道多留時間。"},
+      {"time": "10:00", "title": "猴硐貓村＋煤矿園區", "place": "猴硐貓街"},
+      {"time": "12:30", "title": "九份午餐", "place": "九份老街", "md": "芋粿翹＋紅糟肉圓，餐後爬豎崎路喝茶。"},
+      {"time": "17:00", "title": "金瓜石神社夕陽", "place": "金瓜石", "md": "夜宿瑞芳或九份。"},
+      {"time": "09:30", "title": "十分放天燈", "place": "十分老街"},
+      {"time": "13:00", "title": "十分瀑布", "place": "十分瀑布", "md": "雨季步道濕滑，穿防滑鞋。"},
+      {"time": "16:00", "title": "返程", "place": "十分瀑布"}
+    ]},
+    {"type": "weather", "place": "瑞芳區", "hint": "新北市"},
+    {"type": "stock", "symbols": [{"sym": "2330.TW", "name": "台積電"}, {"sym": "BTC-USD", "name": "比特幣"}]},
+    {"type": "budget", "currency": " 元", "cap": 3500, "items": [
+      {"label": "餐飲小吃", "cost": 1100}, {"label": "天燈+娛樂", "cost": 600}, {"label": "住宿(1晚)", "cost": 1200}, {"label": "油錢+過路費", "cost": 700}, {"label": "停車費", "cost": 300}
+    ]},
+    {"type": "calculator", "title": "房貸試算（月繳）", "money": true, "unit": " 元/月", "expr": "principal*(rate/100/12)*Math.pow(1+rate/100/12,years*12)/(Math.pow(1+rate/100/12,years*12)-1)", "vars": {
+      "principal": {"label": "貸款本金", "min": 1000000, "max": 30000000, "step": 100000, "def": 8000000},
+      "years": {"label": "貸款年限", "min": 5, "max": 40, "step": 1, "def": 30},
+      "rate": {"label": "年利率 %", "min": 0.5, "max": 5, "step": 0.05, "def": 2.1}
+    }},
+    {"type": "chart", "kind": "bar", "labels": ["餐飲", "住宿", "娛樂", "交通"], "values": [1100, 1200, 600, 1000], "unit": "NT$"},
+    {"type": "table", "headers": ["必吃", "店家", "價位", "站點"], "rows": [
+      ["芋粿翹", "老字號芋粿攤", "60 元", "九份"],
+      ["紅糟肉圓", "九份肉圓店", "85 元", "九份"],
+      ["天燈(小)", "協天宮口", "150 元", "十分"],
+      ["臭豆腐", "十分臭豆腐攤", "50 元", "十分"]
+    ]},
+    {"type": "compare", "columns": [
+      {"h": "九份", "items": ["夜景聞名、坡多階梯多", "茶館文化、豎崎路藍調", "假日基山公路常塞"]},
+      {"h": "十分", "items": ["天燈體驗、鐵道風情", "地勢平緩、長輩友善", "瀑布＋礦坑遺址"]}
+    ]},
+    {"type": "steps", "items": ["早上 8 點前上九份，車位才穩", "九份老街停車場滿改停瑞芳市区轉接駁", "返程走國5→國1，避開平溪線午後單日車流"]},
+    {"type": "callout", "icon": "⚠️", "title": "雨天備案", "md": "雨勢大改走**室內**：台陽礦業遺址展館＋九份咖啡館巡禮，天燈改改期。"},
+    {"type": "quote", "md": "山線旅行不貪站點：選兩個區塊深度走，勝過跳站快閃。", "cite": "本回答整理"},
+    {"type": "status", "items": [
+      {"dot": "ok", "label": "訂位", "note": "兩地皆不需訂"},
+      {"dot": "warn", "label": "付款", "note": "老街多現金，備 2,000 現鈔"},
+      {"dot": "ok", "label": "路況", "note": "全程柏油，普通房車可"}
+    ]},
+    {"type": "links", "items": [{"url": "https://zh.wikipedia.org/wiki/%E4%B9%9D%E4%BB%BD"}, {"url": "https://zh.wikipedia.org/wiki/%E5%8D%81%E5%88%86"}]},
+    {"type": "email", "subject": "新北兩日山線行程分享", "body": "把時間軸、預算和地圖連結整理好發給我"},
+    {"type": "ics"},
+    {"type": "sources", "items": [
+      {"title": "九份(維基)", "url": "https://zh.wikipedia.org/wiki/%E4%B9%9D%E4%BB%BD"},
+      {"title": "十分(維基)", "url": "https://zh.wikipedia.org/wiki/%E5%8D%81%E5%88%86"},
+      {"title": "Open-Meteo", "url": "https://open-meteo.com"},
+      {"title": "OSRM", "url": "https://project-osrm.org"}
+    ]}
+  ]
+}
