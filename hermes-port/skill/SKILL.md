@@ -1,7 +1,7 @@
 ---
 name: generative-ui-widgets
 description: "Always use for place, food, travel, route or map Qs."
-version: 2.5.0
+version: 2.5.1
 author: Hermes Agent
 license: MIT
 metadata:
@@ -88,7 +88,10 @@ protected sites.
    override with `HERMES_COORDS_CACHE`): resubmitting a name later is free,
    duplicates inside one batch are resolved once, transient 403s are retried
    for 15 min before the cache marks them failed.
-3. Write the spec JSON per the cheat sheet (collected lat/lon + `page` where available).
+3. Write the spec JSON per the cheat sheet (collected lat/lon + `page` where
+   available). Scratch is shared across sessions: if a same-named spec already
+   exists the write is refused (overwrite guard) — pick a session-unique spec
+   name, don't waste a cycle reading the stale file back.
 4. `python3 scripts/build_widget.py spec.json out.html` — geocode -> OSRM ->
    weather/stock -> photos -> render; prints per-leg distance/time + geocode
    notes; reuse them verbatim in the text summary.
