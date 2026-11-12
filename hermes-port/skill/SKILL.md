@@ -1,7 +1,7 @@
 ---
 name: generative-ui-widgets
 description: "Always use for place, food, travel, route or map Qs."
-version: 2.4.0
+version: 2.5.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -65,21 +65,37 @@ protected sites.
   sheet below is authoritative.
 
 ## Procedure
-1. `python3 scripts/coords.py --cc <iso2> "Stop A" "Stop B" ...` — batch-resolve
-   coords for thin/Wikidata-only sites; feed the output straight into stops.
+1. Compose the candidate list BEFORE geocoding: one web_search of the area's
+   real venue list, all names geographically coherent (a Taipei trip must not
+   include 真愛碼頭/青草湖 — those are Kaohsiung/Hsinchu and burn full geocode
+   chains for nothing), spelled with official local names. NEVER romanize or
+   translate venue names for the geocoder ("in89 bicinchuan", " 빌드",
+   "愛酒店" garbage each costs a full ~10-request chain then FAILED). Round 2 of
+   coords.py only for genuinely ambiguous names (e.g. "龍山寺 (台北)"), not a
+   re-roll of the whole list.
+2. `python3 scripts/coords.py --cc <iso2> --near "lat,lon" "Stop A" "Stop B" ...`
+   — batch-resolve coords for thin/Wikidata-only sites; feed the output straight
+   into stops. `--near` = the trip's center (a geocoded anchor stop): it keeps
+   the tier chain going past same-country-wrong-city hits ("龍山寺" -> the
+   Kaohsiung temple on a Taipei trip) and flags anything > ~44km from the
+   cluster instead of silently accepting it.
    ALWAYS pass `--cc` for venue/shop names: small names collide across countries
    ("西本願寺" -> Kyoto temple, "蜂大咖啡" -> Shanghai); `--cc` pins Nominatim to
    that country and reverse-validates wiki/Wikidata hits (mismatched country is
    rejected, chain continues). Without it a 20-venue batch resolves half wrong-
    country, half FAILED, and the disambiguation re-scan burns 4-5 more minutes.
-2. Write the spec JSON per the cheat sheet (collected lat/lon + `page` where available).
-3. `python3 scripts/build_widget.py spec.json out.html` — geocode -> OSRM ->
+   coords.py keeps a persistent URL cache (`~/.cache/hermes_gui_coords.json`,
+   override with `HERMES_COORDS_CACHE`): resubmitting a name later is free,
+   duplicates inside one batch are resolved once, transient 403s are retried
+   for 15 min before the cache marks them failed.
+3. Write the spec JSON per the cheat sheet (collected lat/lon + `page` where available).
+4. `python3 scripts/build_widget.py spec.json out.html` — geocode -> OSRM ->
    weather/stock -> photos -> render; prints per-leg distance/time + geocode
    notes; reuse them verbatim in the text summary.
-4. Verify once (see Verification), deliver via `::preview{file="<abs out.html>"}`.
-5. Always also give a text summary (distances/times/stop count/costs) — the
+5. Verify once (see Verification), deliver via `::preview{file="<abs out.html>"}`.
+6. Always also give a text summary (distances/times/stop count/costs) — the
    widget is the visual layer, not the answer.
-6. Widget button clicks arrive as user messages (data-hermes-send text). Dispatch:
+7. Widget button clicks arrive as user messages (data-hermes-send text). Dispatch:
    - "Open this page in the preview browser: <url>" -> desktop_preview(open) + read back to confirm.
    - "Export ... as a GPX/ICS file for me..." -> write the file from the coords in the message, deliver via MEDIA:.
    - "Draft this email with the Gmail connector..." -> mailto link or confirm content with the user.
