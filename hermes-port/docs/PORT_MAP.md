@@ -11,10 +11,10 @@ Hermes port replaces p9 with: agent-generated spec JSON + build_widget.py + sand
 | places | yes | photo/rating/price/area/tags cards; link via data-hermes-send (sandbox!) |
 | timeline | yes | linked to map: click row -> flyTo pin; click pin -> highlight row |
 | budget | yes | sliders + per-person + cap, pure JS |
-| calculator | yes | whitelisted formula, vars injected (sandbox = iframe, acceptable) |
+| calculator | yes | arithmetic-only formula (AST-validated server-side, parsed by a restricted evaluator client-side; no eval/new Function) |
 | weather | yes | open-meteo daily, WMO code -> emoji |
 | stock | yes | Yahoo chart API; 1D/1M/1Y SVG sparklines, tab toggle |
-| links | yes | favicon (icons.duckduckgo) + fetched <title>; open via prompt |
+| links | yes | favicon (icons.duckduckgo) + given title or hostname (no page fetch); open via prompt |
 | email | yes | data-hermes-send -> agent drafts via Gmail connector |
 | status | yes | status board rows |
 | apps | n/a | Craft apps launcher: no Hermes equivalent, deliberately skipped |

@@ -173,11 +173,36 @@ document.querySelectorAll('.bud').forEach(box=>{
   }
   inputs.forEach(inp=>inp.oninput=upd); upd();
 });
-// calculators (formula whitelisted server-side; runs in sandboxed iframe)
+// calculators: restricted arithmetic evaluator (numbers, declared vars, + - * / % **, parens, Math.<CALC_FN>).
+// No eval/new Function: the expression is parsed, never executed as code.
+const CALC_FN={pow:2,min:0,max:0,abs:1,round:1,floor:1,ceil:1,sqrt:1,log:1,exp:1};
+function calcCompile(src){
+  const toks=String(src).match(/\d+\.?\d*(?:e[+-]?\d+)?|\.\d+|[A-Za-z_]\w*|\*\*|[-+*\/%()]|\S/gi)||[];
+  let p=0;
+  const peek=()=>toks[p], eat=t=>{ if(toks[p]!==t) throw Error('bad expr'); p++; };
+  function prim(){ const t=toks[p++];
+    if(t===undefined) throw Error('bad expr');
+    if(t==='('){ const e=add(); eat(')'); return e; }
+    if(/^(\d|\.\d)/.test(t)){ const n=+t; if(!isFinite(n)) throw Error('bad num'); return ()=>n; }
+    if(t==='Math'&&toks[p]==='.'){ p++; const name=toks[p++]; const ar=CALC_FN[name];
+      if(!Object.prototype.hasOwnProperty.call(CALC_FN,name)) throw Error('bad fn');
+      eat('('); const args=[add()]; while(peek()===','){ p++; args.push(add()); } eat(')');
+      if(ar&&args.length!==ar) throw Error('arity'); const f=Math[name];
+      return v=>f.apply(null,args.map(a=>a(v))); }
+    if(/^[A-Za-z_]\w*$/.test(t)&&peek()!=='('&&peek()!=='.') return v=>(Object.prototype.hasOwnProperty.call(v,t)?v[t]:NaN);
+    throw Error('bad token'); }
+  function unary(){ if(peek()==='-'){p++; const e=unary(); return v=>-e(v);} if(peek()==='+'){p++; return unary();} return pow(); }
+  function pow(){ const b=prim(); if(peek()==='**'){ p++; const e=unary(); return v=>Math.pow(b(v),e(v)); } return b; }
+  function mul(){ let l=unary(); while(['*','/','%'].includes(peek())){ const o=toks[p++], a=l, r=unary();
+    l=o==='*'?v=>a(v)*r(v):o==='/'?v=>a(v)/r(v):v=>a(v)%r(v); } return l; }
+  function add(){ let l=mul(); while(peek()==='+'||peek()==='-'){ const o=toks[p++], a=l, r=mul();
+    l=o==='+'?v=>a(v)+r(v):v=>a(v)-r(v); } return l; }
+  const f=add(); if(p!==toks.length) throw Error('trailing'); return f;
+}
 document.querySelectorAll('.calc').forEach(box=>{
   const d=JSON.parse(box.dataset.calc);
   const inputs=[...box.querySelectorAll('input')];
-  let fn; try { fn=new Function('vars','with(vars){return ('+d.expr+');}'); } catch(e){ fn=()=>NaN; }
+  let fn; try { fn=calcCompile(d.expr); } catch(e){ fn=()=>NaN; }
   function upd(){
     const vars={};
     inputs.forEach(inp=>{ vars[inp.dataset.k]=+inp.value; inp.parentElement.querySelector('.v').textContent=(+inp.value).toLocaleString(); });
