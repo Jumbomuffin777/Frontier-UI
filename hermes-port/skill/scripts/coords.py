@@ -44,13 +44,15 @@ def _cache_put(url, data=None, neg=False):
         return
     CACHE[url] = {"t": time.time(), "exp": time.time() + (900 if neg else 30*86400),
                   "__neg": 1 if neg else 0, "d": data}
+    tmp = None
     try:
-        tmp = CACHE_PATH + ".tmp"
-        with open(tmp, "w") as f:
+        import tempfile
+        fd, tmp = tempfile.mkstemp(prefix=".coords-cache-", dir=os.path.dirname(os.path.abspath(CACHE_PATH)))
+        with os.fdopen(fd, "w") as f:
             json.dump(CACHE, f)
         os.replace(tmp, CACHE_PATH)
     except Exception:
-        pass
+        if tmp and os.path.exists(tmp): os.unlink(tmp)
 
 def _cache_hit(url):
     v = CACHE.get(url)
@@ -67,7 +69,10 @@ def get(url, timeout=15, retry=True):
             return hit
     req = urllib.request.Request(url, headers=UA)
     try:
-        data = json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode())
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read(2_000_001)
+        if len(raw) > 2_000_000: raise ValueError("response too large")
+        data = json.loads(raw.decode())
         _cache_put(url, data)
         return data
     except urllib.error.HTTPError as e:

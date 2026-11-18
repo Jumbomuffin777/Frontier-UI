@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.0 — 2026-11-13
+**Frontier UI for Hermes Agent.** Thanks to [@Lawlietr](https://github.com/Lawlietr) for PR #4.
+
+- **New `hermes-port/`** (PR #4 by @Lawlietr): a Hermes Agent skill that brings Frontier UI's generative widgets
+  (maps and routes, weather, stocks, photos, timelines, budgets, calculators, tables and more) to the Hermes desktop
+  app as native `::preview` widgets, with a spec-driven builder and an installer (`hermes-port/sync.sh`).
+- **Security hardening** of the port: all widget text, attributes and inline data are escaped; the calculator uses a
+  restricted arithmetic evaluator instead of running code; link previews no longer fetch pages and every lookup is
+  limited to public web addresses with capped response sizes; SearXNG is configured only through `HERMES_SEARXNG`;
+  the installer no longer deletes files unless asked (`--prune`); and widget button actions are treated as untrusted
+  and shown in full. 19 regression tests added (`hermes-port/tests/test_security.py`).
+- The Open WebUI tool is unchanged (still 1.3.3); no update is needed there.
+
 ## 1.3.3 — 2026-11-09
 **Gentler on the free photo services.** Thanks to [@nnraiden](https://github.com/nnraiden) for issue #3.
 
