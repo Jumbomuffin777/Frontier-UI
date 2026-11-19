@@ -83,6 +83,13 @@ def get(url, timeout=15, retry=True):
         raise
     except _NegHit:
         raise
+    except (urllib.error.URLError, TimeoutError, OSError):
+        # Transport blips (TLS handshake timeout, reset) must not be
+        # negatively cached for 15 min; one backoff retry then continue chain.
+        if retry:
+            time.sleep(2.0)
+            return get(url, timeout, retry=False)
+        return None
     except Exception:
         _cache_put(url, neg=True)
         return None

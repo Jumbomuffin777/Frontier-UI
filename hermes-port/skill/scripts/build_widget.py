@@ -146,6 +146,14 @@ def get(url, timeout=20, retry=True):
             time.sleep(2.0)
             return get(url, timeout, retry=False)
         raise
+    except (urllib.error.URLError, TimeoutError, OSError):
+        # Datacenter/cloud egress TLS handshakes and connections flake
+        # regularly (handshake timeouts, connection resets); a mid-build blip
+        # used to crash whole builds. One backoff retry, then surface it.
+        if retry:
+            time.sleep(2.0)
+            return get(url, timeout, retry=False)
+        raise
 
 TW_HINT = re.compile(r"(台灣|臺灣|台北|新北|桃園|台中|高雄|台南|基隆|新竹|嘉義|屏東|宜蘭|花蓮|台東|苗栗|彰化|南投|雲林|金門|澎湖)")
 NEAR = []  # geocoded points of this build, used for sanity

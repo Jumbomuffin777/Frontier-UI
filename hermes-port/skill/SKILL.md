@@ -1,7 +1,7 @@
 ---
 name: generative-ui-widgets
 description: "Always use for place, food, travel, route or map Qs."
-version: 2.6.0
+version: 2.6.1
 author: Hermes Agent
 license: MIT
 metadata:
