@@ -1,7 +1,7 @@
 ---
 name: generative-ui-widgets
 description: "Always use for place, food, travel, route or map Qs."
-version: 2.5.1
+version: 2.6.1
 author: Hermes Agent
 license: MIT
 metadata:
@@ -84,6 +84,13 @@ protected sites.
    that country and reverse-validates wiki/Wikidata hits (mismatched country is
    rejected, chain continues). Without it a 20-venue batch resolves half wrong-
    country, half FAILED, and the disambiguation re-scan burns 4-5 more minutes.
+   For a stop coords.py flags FAR/FAILED, ONE single-endpoint curl is allowed
+   (the no-hand-roll rule targets iterative fetch scripts, not a one-off
+   confirm): `curl -A <UA> "https://photon.komoot.io/api/?q=<name+nearest-town>&lat=&lon="`.
+   Pitfalls: Photon returns EMPTY features for CJK queries (especially with
+   lat/lon bias) — query in romanization; hardcode only when two independent
+   services (coords.py's Nominatim hit and Photon) agree on the coords, even
+   if that contradicts your own geographic intuition.
    coords.py keeps a persistent URL cache (`~/.cache/hermes_gui_coords.json`,
    override with `HERMES_COORDS_CACHE`): resubmitting a name later is free,
    duplicates inside one batch are resolved once, transient 403s are retried
@@ -187,12 +194,23 @@ article title often differs from the colloquial name — give `page` explicitly.
 - **vision_analyze may 404**: verify via DOM/network, not screenshots.
 
 ## Verification (one browser pass, max 2 fix cycles)
-Open the file:// URL and check with js():
-- `.pin` count == stop count; visible pins/rows on the initial tab == Day 1 counts
-- switch tab -> visible pin count changes; click timeline row -> `.pin.hi` == 1
-- budget Total, calculator Result, stock sparkline present; photos naturalWidth>0
-- resources include openfreemap + wikimedia/wikidata; if tiles 403 from egress
-  IP, record it and ship (desktop client will load them normally)
+Open the file:// URL and check with js(). The rendered HTML uses ABBREVIATED
+class names — `.pin`/`.tl-row` etc. from the block vocabulary exist only in JS
+source, not in the DOM. Real selectors (if unsure, first grep the out.html for
+`class="` and count):
+- Map pins = `.maplibregl-marker` (count == stop count; canvas element present
+  means MapLibre initialized)
+- timeline rows = `.tm`, map stop cards = `.r`, weather cards = `.wc`, budget
+  Total readable via body innerText
+- switch day-tab by clicking the leaf element whose text == "Day N" -> visible
+  `.maplibregl-marker` count drops to that day's stops; click a `.tm` row ->
+  exactly one element gains `.hi` (compare count before/after; `.hi` also
+  appears in static CSS so count the elements, not string occurrences)
+- photos naturalWidth>0 (a handful failing to load is fine — placeholder
+  renders, don't loop)
+- ONLY add the tile-403 caveat to the user summary if tiles genuinely fail
+  (no canvas / no markers); if the map initialized and markers exist, ship
+  without the caveat
 
 ## Portability (Claude Code / Codex CLI / other agents)
 This skill follows the open Agent Skills (SKILL.md) standard: drop the folder
